@@ -1,0 +1,55 @@
+---
+title: "MuSiC-replication-240626"
+output: html_document
+date: "2024-06-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Installing MuSiC package and replicating some of the bulk RNA-seq deconvolution results shown in Wang19 paper 'Bulk tissue cell type deconvolution with multi-subject single-cell expression reference' https://www.nature.com/articles/s41467-018-08023-x.
+
+Tutorial link: https://xuranw.github.io/MuSiC/articles/MuSiC.html.
+
+```{r}
+# install devtools if necessary
+install.packages('devtools')
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(c("SingleCellExperiment", "Biobase", "TOAST"))
+
+# install the MuSiC package
+devtools::install_github('xuranw/MuSiC')
+```
+
+```{r}
+# load packages
+library(SingleCellExperiment)
+library(Biobase)
+library(TOAST)
+library(MuSiC)
+
+```
+
+```{R}
+my_data_dir = '/n/home01/egraff/llm-malaria/data/EMTABsce_healthy.rds'
+GSE50244_PATH = '/n/home01/egraff/llm-malaria/data/GSE50244bulkeset.rds'
+EMTAB_PATH = '/n/home01/egraff/llm-malaria/data/EMTABsce_healthy.rds'
+XinT2D_PATH = '/n/home01/egraff/llm-malaria/data/XinT2Dsce.rds'
+
+GSE50244.bulk.eset = readRDS(GSE50244_PATH)
+GSE50244.bulk.eset
+bulk.mtx = exprs(GSE50244.bulk.eset)
+bulk.meta = exprs(GSE50244.bulk.eset)
+
+EMTAB.sce = readRDS(EMTAB_PATH)
+EMTAB.sce
+
+XinT2D.sce = readRDS(XinT2D_PATH)
+XinT2D.sce
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
