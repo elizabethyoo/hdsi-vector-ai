@@ -11,15 +11,22 @@ setwd(current_file_dir)
 shrock_data_dir <- "../data/shrock_2020/"
 pat_meta <- read_csv(file.path(shrock_data_dir,
                                "Shrock_2020_patient-metadata.csv"))
-cor_z <- read_csv(file.path(shrock_data_dir,
+cov_z <- read_csv(file.path(shrock_data_dir,
                             "Shrock_2020_Coronavirus-screen-IgG-Zscores.csv"))
 vir_z <- read_csv(file.path(shrock_data_dir,
                             "Shrock_2020_VirScan-IgG-Zscores.csv"))
-cor_lib <- read_csv(file.path(shrock_data_dir,
+cov_lib <- read_csv(file.path(shrock_data_dir,
                               "Shrock_2020_Coronavirus-library.csv"))
 vir_lib <- read_csv(file.path(shrock_data_dir,
                               "Shrock_2020_VirScan-library.csv"))
+# make column names valid R variables 
+colnames(pat_meta) <- make.names(gsub(" ", "_", colnames(pat_meta)), unique = TRUE)
+colnames(cov_lib) <- make.names(gsub(" ", "_", colnames(cov_lib)), unique = TRUE)
+colnames(vir_lib) <- make.names(gsub(" ", "_", colnames(vir_lib)), unique = TRUE)
 
+# remove unncessary columns 
+cov_z <- cov_z[, !colnames(cov_z) %in% c("group", "input")]
+vir_z <- vir_z[, !colnames(vir_z) %in% c("group", "input")]
 
 # subset of virscan library whose peptides were detected in samples
 vir_lib_subset <- vir_lib[vir_lib$id %in% rownames(vir_z), ]
@@ -44,29 +51,12 @@ pep_funcs <- c("aaComp", "aIndex", "boman", "charge", "crucianiProperties",
 
 # Apply each function to the 'peptide' column of vir_lib_subset and save the outputs into a new dataframe
 pep_funcs_results <- sapply(pep_funcs, function(func) {
-    do.call(func, list(vir_lib_subset$peptide))
+    do.call(func, list(vir_lib$peptide))
 })
 # Save resulting list as a rds file
-saveRDS(pep_funcs_results, file = here::here("./results/", "vir_lib_subset_pep_funcs_results.rds"))
-# system("say saved pep func results") # sound alert when done 
+saveRDS(pep_funcs_results, file = here::here("./results/", "vir_lib_pep_funcs_results.rds"))
+system("say saved entire virscan library pep func results") # sound alert when done 
 
 # load the saved rds file
-pep_funcs_results <- readRDS(file = here::here("./results/", "vir_lib_subset_pep_funcs_results.rds"))
-rownames(pep_funcs_results) <- vir_lib_subset$id
-
-# Calculate means of all rows except for values in 'group' and 'id' columns
-vir_z$means <- rowMeans(vir_z[, -c(1, 2)], na.rm = TRUE)
-vir_z_aIndex <- as.matrix(cbind(c(vir_z_means), c(pep_funcs_results[,"aIndex"])))
-ggplot()
-
-# Identify the row indices of the vir_z dataframe
-all_indices <- 1:nrow(vir_z)
-
-# Identify the row indices of the 'mean' column (non-NA values)
-mean_indices <- which(is.na(vir_z$means))
-
-# Find the missing row index
-missing_index <- setdiff(all_indices, mean_indices)
-
-# Print the missing row index
-print(paste("The 'mean' column is missing a row at index:", missing_index))
+vir_lib_pep_feats <- readRDS(file = here::here("./results/", "vir_lib_pep_funcs_results.rds"))
+vir_lib_pep_feats <- as.data.frame(vir_lib_pep_feats)
