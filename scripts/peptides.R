@@ -6,8 +6,7 @@ library(here)
 # set working directory to where script is
 current_file_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
 setwd(current_file_dir)
-# set root directory
-here::set_here("/Users/ecyoo/github/elizabethyoo/llm-malaria")
+
 
 # load data
 shrock_data_dir <- "../data/shrock_2020/"
@@ -88,10 +87,19 @@ vir_lib_pep_feats_sub <- vir_lib_pep_feats[c(
     "tScales", "vhseScales", "zScales"
 )] %>% distinct()
 
-
 # make a temporary merged dataframe of mean z scores and peptide library info, peptide features...
 vir_merged <- merge(vir_z_means, lib_subset, by = "id", x.all = TRUE)
-vir_merged_tmp <- merge(vir_merged, vir_lib_pep_feats_sub, by = "id", x.all = TRUE)
-sum(duplicated(vir_merged$id))
+vir_merged <- merge(vir_merged, vir_lib_pep_feats_sub, by = "id", x.all = TRUE)
+saveRDS(vir_merged, file = here::here("./results/", "vir_z_pep_funcs_results.rds"))
+
+# some covariates are scalars and others are vectors -- how to represent vectors? 
+pep_feats_sc <- c("aIndex", "boman", "charge",  "hmoment",
+                  "hydrophobicity", "instaIndex", "lengthpep", "mw", "mz", "pI")
+pep_feats_vec <- setdiff(pep_funcs, pep_feats_sc)
+vir_merged <- vir_merged %>% mutate_at(all_of(pep_feats_sc), as.numeric)
+
+lm_str <- paste("sample_means~", paste(pep_feats_sc, collapse="+"), sep = "")
+lm_z_means_feats_sc <- lm(lm_str, data = vir_merged)
+summary(lm_z_means_feats_sc)
 
 
