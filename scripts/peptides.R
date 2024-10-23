@@ -1,15 +1,17 @@
 library(Peptides)
 library(readxl)
 library(dplyr)
-library(here)
+library(readr)
+library(tidyr)
+library(tibble)
+library(data.table)
 
 # set working directory to where script is
-current_file_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
-setwd(current_file_dir)
-
+here::i_am("scripts/peptides.R")
+library(here)
 
 # load data
-shrock_data_dir <- "../data/shrock_2020/"
+shrock_data_dir <- here("data", "Shrock_2020")
 pat_meta <- read_csv(file.path(shrock_data_dir,
                                "Shrock_2020_patient-metadata.csv"))
 cov_z <- read_csv(file.path(shrock_data_dir,
@@ -42,6 +44,22 @@ pep_funcs <- c("aaComp", "aIndex", "boman", "charge", "crucianiProperties",
                "kideraFactors", "lengthpep", "massShift", "membpos",
                "mswhimScores", "mw", "mz", "pI", "protFP", "stScales",
                "tScales", "vhseScales", "zScales")
+
+# Helper function to save intermediate results
+# dir: specify directory location relative to root e.g. "scripts/processed/"
+# TODO: specify file format e.g. RDS, dataframe, csv, JSON, etc. 
+save_as_rds <- function(object, name, dir) {
+  # Create subdirectory if it doesn't exist
+  subdir_path <- paste("./", dir, sep = "")
+  processed_dir <- here::here("./results/processed/")
+  if (!dir.exists(processed_dir)) {
+    dir.create(processed_dir, recursive = TRUE)
+  }
+  # Generate the filename and save the object
+  filename <- paste0(name, "_", Sys.Date(), ".rds")
+  saveRDS(object, file = file.path(processed_dir, filename))
+}
+
 
 # # sanity check on one peptide sequence
 # test_pep <- vir_lib_subset$peptide[1]
@@ -101,5 +119,45 @@ vir_merged <- vir_merged %>% mutate_at(all_of(pep_feats_sc), as.numeric)
 lm_str <- paste("sample_means~", paste(pep_feats_sc, collapse="+"), sep = "")
 lm_z_means_feats_sc <- lm(lm_str, data = vir_merged)
 summary(lm_z_means_feats_sc)
+save_as_rds(lm_z_means_feats_sc, "lm_z_means_feats_sc", "./results/")
+
+## 2024-10-22-tues 
+## trying to merge patient metadata with virscan z scores, so we can have patient
+## sample-level covid and hospitalized status witj their corresponding z-score 
+## for various peptides
+pat_meta <- pat_meta %>% select(rep_1, rep_2, COVID19_status, Hospitalized)
+
+pat_meta <- pat_meta %>%
+  # Create the 'sample' column as row number
+  mutate(sample = row_number()) %>%
+  # Reshape the data, turning 'rep_1' and 'rep_2' into a single column 'rep'
+  pivot_longer(cols = c(rep_1, rep_2), 
+               names_to = "rep", 
+               values_to = "rep_value") 
+  # Optionally remove the 'replicate' column if you no longer need it
+  # select(-replicate)
+
+# View the result
+print(pat_meta)
+select(vir_z, -any_of(2))
+# swap rows and columns of vir_z
+vir_z_long <- vir_z %>%
+  pivot_longer(cols = matches("S\\d+$"),   # Regex to match columns containing 'S' followed by digits and an underscore
+               names_to = "rep_value",     # Store column names (rep_values) in 'rep_value'
+               values_to = "z_score")
+
+# this line made R run out of memory... need to find more efficient ways to merge
+# trying data.table package which apparently makes working with large 
+# datasets memory-efficient
+# tmp <- pat_meta %>% inner_join(vir_z_long, by="rep_value")
+
+# convert data.frames to data.tables, merge data.tables, and convert back to data.frames
+pat_meta_dt <- as.data.table(pat_meta)
+vir_z_long_dt <- as.data.table(vir_z_long)
+
+merged_data_dt <- vir_z_long_dt[pat_meta_dt, on = "rep_value", allow.cartesian = TRUE]
+save_as_rds(merged_data_dt, "pat_meta_vir_z", "./data/")
+
+#TODO rename merged_data_dt to something more descriptive
 
 
