@@ -2,4 +2,16 @@
 data
 llm-malaria.code-workspace
 
+.DS_Store
+.RData
+.Rhistory
+.here
+.vscode/
+results/processed/
+scripts/.RData
+scripts/.Rhistory
+scripts/Shrock2020_regression.nb.html
+scripts/Untitled.nb.html
+
+
 .Rproj.user
