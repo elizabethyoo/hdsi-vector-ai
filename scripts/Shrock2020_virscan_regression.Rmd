@@ -1,0 +1,210 @@
+---
+title: "Shrock2020_virscan_regression"
+output: html_notebook
+---
+
+
+```{r}
+library(Peptides)
+library(readxl)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(tibble)
+library(data.table)
+library(glmnet)
+# set working directory to where script is
+here::i_am("scripts/Shrock2020_virscan_regression.Rmd")
+library(here)
+source("../scripts/peptides.R")
+
+```
+
+
+```{r}
+# load processed merged virscan data containing covid, hospitalization, peptide-zscores for each patient sample
+pat_meta_vir_z <- readRDS(file = here::here("./results/processed", "pat_meta_vir_z_2024-10-22.rds"))
+```
+
+```{r}
+
+# Convert to a tibble if needed
+pat_meta_vir_z <- as_tibble(pat_meta_vir_z)
+
+# Pivot to wide format using pivot_wider
+pivot_pat_meta_vir_z <- pat_meta_vir_z %>%
+  pivot_wider(names_from = id, 
+              values_from = z_score)
+
+pivot_pat_meta_vir_z <- pivot_pat_meta_vir_z %>% mutate(COVID19_status = if_else(COVID19_status == "positive", 1, 0),
+                                  Hospitalized = if_else(Hospitalized == "hospitalized", 1, 0))
+                                  
+
+# View the resulting pivoted data
+head(pivot_pat_meta_vir_z, 20)
+```
+
+```{r}
+# save pat_meta_vir_z; ready to use as input to model
+save_as_rds(pivot_pat_meta_vir_z, "pat_meta_vir_z_input", "./data/")
+```
+
+
+```{r}
+
+# response: covariates: all z scores
+NUM_PEPTIDES = 115753
+covstat_zscores_str <- paste("COVID19_status~", paste(1:NUM_PEPTIDES, collapse="+"), sep = "")
+# lm_z_means_feats_sc <- lm(lm_str, data = vir_merged)
+# summary(lm_z_means_feats_sc)
+# save_as_rds(lm_z_means_feats_sc, "lm_z_means_feats_sc", "./results/")
+
+## Try LR just because, try  LASSO, Elastic Net
+## Otherwise, want to try dim reduction first 
+
+
+set.seed(1031)
+## Fit LASSO
+## find penalty \lambda by cross-validation by minimizing MSE
+z_scores <- as.matrix(pivot_pat_meta_vir_z[, -c(1:5)]) # just the z-score columns
+cov_stat <- pivot_pat_meta_vir_z$COVID19_status
+
+## filter patients for whom we have hospitalization status
+pat_vir_h <- pivot_pat_meta_vir_z %>% filter(!is.na(Hospitalized))
+z_scores_h <- as.matrix(pat_vir_h[, -c(1:5)]) # just the z-score columns
+hos_stat <- pat_vir_h$Hospitalized
+
+lasso_cov_z <- cv.glmnet(x=z_scores, y=cov_stat, alpha=1,family="binomial",type.measure = "mse")
+save_as_rds(lasso_cov_z, "lasso_cov_z_vir", "./results")
+
+lasso_hos_z <- cv.glmnet(x=z_scores_h, y=hos_stat, alpha=1,family="binomial",type.measure = "mse")
+save_as_rds(lasso_hos_z, "lasso_hos_z_vir", "./results")
+
+## Fit Ridge
+ridge_cov_z <- cv.glmnet(x=z_scores, y=cov_stat, alpha=0,family="binomial",type.measure = "mse")
+save_as_rds(ridge_cov_z, "ridge_cov_z_vir", "./results")
+
+ridge_hos_z <- cv.glmnet(x=z_scores_h, y=hos_stat, alpha=0,family="binomial",type.measure = "mse")
+save_as_rds(ridge_hos_z, "ridge_hos_z_vir", "./results")
+
+```
+
+```{r,  figures-side, fig.show="hold", out.width="50%"}
+plot(lasso_hos_z)
+title("LASSO hospitalization status vs. all z-scores")
+
+plot(lasso_cov_z)
+title(main="LASSO covid status vs. all z-scores")
+
+```
+
+```{r}
+plot(ridge_cov_z)
+title(main="Ridge covid status vs. all z-scores")
+```
+
+```{r}
+l_min <- lasso_cov_z$lambda.min
+coef <- coef(lasso_cov_z, s = "lambda.min")
+# should give the same results as using coef() on cv.glmnetobject and specifying s
+# lasso_m_cov_z <- glmnet(x = z_scores, y = cov_stat, alpha = 1, lambda = l_min)
+# coef_2 <- lasso_m_cov_z$beta
+nonzero_coef <- coef[coef[,1]!=0,][-1] # also exclude intercept
+
+l_h_min <- lasso_hos_z$lambda.min
+coef_h <- coef(lasso_hos_z, s = "lambda.min")
+nonzero_coef_h <- coef_h[coef_h[,1]!=0,][-1]
+
+l_r_min <- ridge_cov_z$lambda.min
+coef_r <- coef(ridge_cov_z, s = "lambda.min")
+nonzero_coef_r <- coef_r[coef_r[,1]!=0,][-1]
+
+
+
+```
+
+
+```{r}
+
+## Relating LASSO coefficients to peptides
+vir_lib <- readRDS(file = here::here("./data/processed", "vir_lib_2024-10-24.rds"))
+cov_lib <- readRDS(file = here::here("./data/processed", "cov_lib_2024-10-24.rds"))
+
+nonzero_coef_df <- data.frame(
+  id = names(nonzero_coef), # extract peptide ids
+  coef = nonzero_coef, # extract nonzero coefficients
+  stringsAsFactors = FALSE
+)
+
+nonzero_coef_h_df <- data.frame(
+  id = names(nonzero_coef_h), # extract peptide ids
+  coef = nonzero_coef_h, # extract nonzero coefficients
+  stringsAsFactors = FALSE
+) %>% mutate(id = as.numeric(id))
+
+
+## Relate Ridge coefficients to peptides 
+nonzero_coef_r_df <- data.frame(
+  id = names(nonzero_coef_r), # extract peptide ids
+  coef = nonzero_coef_r, # extract nonzero coefficients
+  stringsAsFactors = FALSE
+) %>% mutate(id = as.numeric(id))
+
+# make sure id values in nonzero_coef_df and vir_lib match (want both to be numeric)
+nonzero_coef_df <- nonzero_coef_df %>% 
+  mutate(id = as.numeric(id))
+
+# map back to peptides by descending order of LASSO coefficients
+tmp_desc_coef <- vir_lib %>% 
+  inner_join(nonzero_coef_df, by = "id") %>%
+  select(coef, everything()) %>%
+  arrange(desc(coef))
+
+tmp_desc_coef_h <- vir_lib %>% 
+  inner_join(nonzero_coef_h_df, by = "id") %>%
+  select(coef, everything()) %>%
+  arrange(desc(coef))
+
+
+tmp_desc_coef_r <- vir_lib %>% 
+  inner_join(nonzero_coef_r_df, by = "id") %>%
+  select(coef, everything()) %>%
+  arrange(desc(coef))
+
+```
+
+## Top 20 peptides in Virscan library based on LASSO coefficients (response: covid, binary)
+
+```{r}
+head(tmp_desc_coef[c("coef", "Organism", "Species")], 50)
+```
+
+```{r}
+
+
+
+
+
+```
+
+## Top 20 peptides in Virscan library based on LASSO coefficients (respose: hospitalization, binary)
+
+```{r}
+head(tmp_desc_coef_h[c("coef", "Organism", "Species")], 50)
+```
+
+
+## Top 20 peptides in Virscan library based on Ridge coefficients (response: covid, binary)
+
+```{r}
+head(tmp_desc_coef_r[c("coef", "Organism", "Species")], 20)
+```
+
+## TODO
+## Top 20 peptides in Virscan library based on Ridge coefficients (response: hospitalization, binary)
+
+```{r}
+head(tmp_desc_coef_h_r[c("coef", "Organism", "Species")], 20)
+```
+
+
