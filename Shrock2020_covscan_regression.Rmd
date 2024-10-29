@@ -1,5 +1,5 @@
 ---
-title: "Shrock2020_virscan_regression"
+title: "Shrock2020_covscan_regression"
 output: html_notebook
 ---
 
@@ -14,7 +14,7 @@ library(tibble)
 library(data.table)
 library(glmnet)
 # set working directory to where script is
-here::i_am("scripts/Shrock2020_regression.Rmd")
+here::i_am("scripts/Shrock2020_covscan_regression.Rmd")
 library(here)
 source("../scripts/peptides.R")
 
