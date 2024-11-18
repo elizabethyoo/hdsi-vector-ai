@@ -1,0 +1,524 @@
+---
+title: "Shrock2020_eda"
+output: html_notebook
+---
+
+Set working directory to current directory, load necessary packages and scripts 
+```{r}
+# set working directory to where script is
+SCRIPT_PATH <- rstudioapi::getSourceEditorContext()$path
+setwd(dirname(SCRIPT_PATH))
+
+# load packages 
+library(Peptides)
+library(readxl)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(tidyverse)
+library(tibble)
+library(data.table)
+library(styler)
+library(ggplot2)
+source("helper_funcs.R")
+```
+
+
+save "raw" dataframes as RDS objects for faster loading in the future
+```{r}
+SHROCK_DIR <- "~/hdsi-vector-ai/data/Shrock_2020/"
+# pat_meta <- read_csv(file.path(SHROCK_DIR,
+#                                "Shrock_2020_patient-metadata.csv"))
+# cov_z <- read_csv(file.path(SHROCK_DIR,
+#                             "Shrock_2020_Coronavirus-screen-IgG-Zscores.csv"))
+# vir_z <- read_csv(file.path(SHROCK_DIR,
+#                             "Shrock_2020_VirScan-IgG-Zscores.csv"))
+cov_lib <- read_csv(file.path(SHROCK_DIR,
+                              "Shrock_2020_Coronavirus-library.csv"))
+vir_lib <- read_csv(file.path(SHROCK_DIR,
+                              "Shrock_2020_VirScan-library.csv"))
+                               
+
+# DF_NAMES <- c("pat_meta", "cov_z", "vir_z", "cov_lib", "vir_lib")
+# SAVE_DIR <- "../data/Shrock_2020/rds"
+# FORMAT <- "rds"
+# 
+# for (NAME in DF_NAMES) {
+#     df <- get(NAME) 
+#     save_as(df, save_path = SAVE_DIR, name = NAME, format = FORMAT)
+# }
+```
+
+```{r}
+# RDS_PATH <- "../data/rds"
+# SHROCK_KEY <- c("cov", "vir", "pat")
+# FORMAT <- "rds"
+# # load all Shrock related dataframes that were previously converted from .csv to .rds (should be quicker)
+# df_ls <- load_filtered_data(directory = RDS_PATH, format = FORMAT, keywords = SHROCK_KEY)
+```
+
+Format dataframes 
+```{r}
+# # make column names valid R variables
+# df_ls <- lapply(df_ls, function(df)  {
+#   colnames(df) <- make.names(gsub(" ", "_", colnames(df)), unique = TRUE)
+#   return(df)
+# })
+# 
+# # separate out each dataframe
+# cov_lib <- df_ls$cov_lib.rds
+# cov_z <- df_ls$cov_z.rds
+# pat_meta <- df_ls$pat_meta.rds
+# vir_lib <- df_ls$vir_lib.rds
+# vir_z <- df_ls$vir_z.rds
+# 
+# # Actually, vir_lib has two columns named "id" -- one column starts from 0 and the other starts from 1
+# to be consistent with the 0-indexing happening in cov_lib, I'll call the column in vir_lib starting with 0
+# "id" and the column starting with 1 "id_1" and use "id" for now. 
+# # Also, cov_lib contains a column that looks like peptide ids but it is named something else; reassign column name "id"
+# colnames(cov_lib)[1] <- "id"
+# colnames(vir_lib)[17] <- "id_1"
+
+
+# DF_NAMES <- c("pat_meta", "cov_z", "vir_z", "cov_lib", "vir_lib")
+# SAVE_DIR <- "../data/processed/Shrock_2020_formatted"
+# FORMAT <- "rds"
+# 
+# for (NAME in DF_NAMES) {
+#     df <- get(NAME)
+#     save_as(df, save_path = SAVE_DIR, name = NAME, format = FORMAT)
+# }
+
+```
+```{r}
+# 241104TODO: divide this notebook into two separate notebooks, one for data formatting and one eda proper
+
+
+############ EDA starts here ###################
+
+
+DF_NAMES <- c("pat_meta", "cov_z", "vir_z", "cov_lib", "vir_lib")
+FORM_PATH <- "../data/processed/Shrock_2020_formatted"
+FORMAT <- "rds"
+formatted_df_ls <- load_filtered_data(directory = FORM_PATH, format = FORMAT, keywords = DF_NAMES)
+cov_lib <- formatted_df_ls$cov_lib.rds
+cov_z <- formatted_df_ls$cov_z.rds
+pat_meta <- formatted_df_ls$pat_meta.rds
+vir_lib <- formatted_df_ls$vir_lib.rds
+vir_z <- formatted_df_ls$vir_z.rds
+```
+
+
+```{r}
+PRO_DAT_PATH <- dirname(FORM_PATH) # data/processed
+VIZ_PATH <- "../results/eda/viz"
+MERGED_NAME <- "pat_meta_vir_z_2024-10-22.rds"
+# load merged patient metadata--virscan z score dataframe 
+pat_vir_z <- readRDS(file.path(PRO_DAT_PATH, MERGED_NAME)) # is a giant file btw will take a while to load
+```
+
+
+```{r}
+pat_vz <- pat_vir_z # reassign name for brevity
+
+# check data type of each column in pat_vz
+# returns: 
+     #        id      rep_value        z_score COVID19_status   Hospitalized         sample            rep 
+     # "numeric"    "character"      "numeric"    "character"    "character"      "integer"    "character" 
+# column_classes <- sapply(pat_vir_z, class)
+# print(column_classes)
+
+# encode covid status and hospitalized status as factors
+pat_vz <- pat_vz %>% mutate(across(c(COVID19_status, Hospitalized), as.factor))
+FACTORIZED_NAME <- "pat_meta_vir_z_2024-11-05.rds"
+save_as(pat_vz, FACTORIZED_NAME, PRO_DAT_PATH, "rds")
+
+# # test plotting for a small subset
+# subset_i <- ceiling((1e-7)*dim(pat_vz)[1]) 
+# pat_vz_subset <- pat_vz[1:subset_i, ]
+# 
+# ggplot(pat_vz_subset, aes(x = z_score)) +
+#   geom_histogram(bins=10) +
+#   labs(title = "histogram of the first 10 virscan z-scores", x = "z-score", y = "freq") +
+#   theme_minimal()
+
+# ggsave(filename = "pat_vz_10zscores_test.png", path = VIZ_PATH)
+
+```
+
+
+## Virscan z-score summary statistics (as is)
+
+```{r}
+
+pat_vz %>%
+  summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    median_z = median(z_score, na.rm = TRUE),
+    sd_z = sd(z_score, na.rm = TRUE),
+    min_z = min(z_score, na.rm = TRUE),
+    max_z = max(z_score, na.rm = TRUE),
+    q1_z = quantile(z_score, 0.25, na.rm = TRUE),
+    q3_z = quantile(z_score, 0.75, na.rm = TRUE),
+    count = length(z_score)
+  )
+
+```
+
+
+
+
+
+
+```{r}
+# Histogram of all z-scores (original scale)
+vz_hist_orig <- ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +  
+  labs(title = "Histogram of All Virscan Z-Scores", x = "Z-Score (bin size = 0.5)", y = "Frequency") +
+  xlim(-10, 10) +
+  theme_minimal()
+
+# Histogram of all z-scores (log scale)
+vz_hist_log <- ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(aes(y = after_stat(count + 10)), binwidth = 0.5, fill = "gray", color = "black") + 
+  labs(title = "Histogram of All Virscan Z-Scores (Log Scale)", x = "Z-Score (bin size = 0.5)", y = "Log(Frequency)") +
+  xlim(-10, 10) +
+  scale_y_log10() +  
+  theme_minimal()
+
+# ggsave(filename = "vz_hist_orig.png", plot = vz_hist_orig, path = VIZ_PATH)
+# ggsave(filename = "vz_hist_log.png", plot = vz_hist_log, path = VIZ_PATH)
+
+# Display the plots
+vz_hist_orig
+vz_hist_log
+
+```
+
+
+Not only does the data look right tailed but ALSO There are almost a billion z-scores. Maybe want to look at a random sample... (see "filtered rs" cell)
+We also need to remove outliers (max z-score is 95081.95)
+
+```{r}
+# remove extreme outliers and missing values
+# post-processing summary statistics 
+
+# outlier threshold: remove values outside of 3 sds 
+mean_z <- mean(pat_vz$z_score, na.rm = TRUE)
+sd_z <- sd(pat_vz$z_score, na.rm = TRUE)
+
+Z_CUTOFF <- 3
+z_outliers <- pat_vz$z_score[abs(pat_vz$z_score) > Z_CUTOFF * sd_z]
+length(z_outliers) # 236087 outliers
+head(z_outliers)
+
+# only keep values with z-scores within 3 sds 
+pat_vz_3sd <- pat_vz %>% 
+  filter(!z_score %in% z_outliers)
+
+# summary statistics post-filtering 
+pat_vz_3sd %>%
+  summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    median_z = median(z_score, na.rm = TRUE),
+    sd_z = sd(z_score, na.rm = TRUE),
+    min_z = min(z_score, na.rm = TRUE),
+    max_z = max(z_score, na.rm = TRUE),
+    q1_z = quantile(z_score, 0.25, na.rm = TRUE),
+    q3_z = quantile(z_score, 0.75, na.rm = TRUE)
+  )
+
+```
+
+```{r}
+
+# plots
+vz_hist_3sd <- ggplot(pat_vz_3sd, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +  
+  labs(title = "histogram of Virscan z-scores, excluding outliers", x = "z-score (bin size 0.5)", y = "frequency") +
+  theme_minimal()
+ggsave(filename = "vz_hist_3sd.png", plot = vz_hist_3sd, path = VIZ_PATH)
+
+# histogram of all z-scores on log scale
+vz_hist_3sd_log <- ggplot(pat_vz_3sd, aes(x = z_score)) +
+  geom_histogram(aes(y = after_stat(count + 10)), binwidth = 0.5, fill = "gray", color = "black") + 
+  labs(title = "histogram of Virscan z-scores, excluding outliers (Log Scale)", x = "z-score (bin size 0.5)", y = "log(frequency)") +
+  scale_y_log10() +  
+  theme_minimal()
+ggsave(filename = "vz_hist_3sd_log.png", plot = vz_hist_3sd_log, path = VIZ_PATH)
+
+vz_hist_3sd 
+vz_hist_3sd_log
+```
+
+
+Now take random sample (say n = 10e6) from filtered z-scores
+
+```{r, filtered-rs}
+set.seed(2024)
+# pat_vz_3sd_random-sample
+SAMPLE_SIZE <- 100000
+pat_vz_rs <- pat_vz_3sd %>% sample_n(SAMPLE_SIZE)
+
+pat_vz_rs_summary <- pat_vz_rs %>%
+  summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    median_z = median(z_score, na.rm = TRUE),
+    sd_z = sd(z_score, na.rm = TRUE),
+    min_z = min(z_score, na.rm = TRUE),
+    max_z = max(z_score, na.rm = TRUE),
+    q1_z = quantile(z_score, 0.25, na.rm = TRUE),
+    q3_z = quantile(z_score, 0.75, na.rm = TRUE),
+    count = length(z_score)
+  )
+
+vz_hist_3sd_rs10e6 <- ggplot(pat_vz_rs, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +
+  labs(title = "histogram of 10^6 samples of Virscan z-scores", x = "z-Score", y = "frequency") +
+  theme_minimal()
+ggsave(filename = "vz_hist_orig.png", plot = vz_hist_3sd_rs10e6, path = VIZ_PATH)
+
+pat_vz_rs_summary
+vz_hist_3sd_rs10e6
+
+```
+
+
+
+
+# Subgroups on covid and hospitalization status 
+
+# TODO write summarize as a function 
+
+```{r}
+vz_cpos <- pat_vz_3sd %>% filter(COVID19_status == "positive")
+vz_cneg <- pat_vz_3sd %>% filter(!COVID19_status == "positive")
+
+vz_cpos_summary <- vz_cpos %>%
+  summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    median_z = median(z_score, na.rm = TRUE),
+    sd_z = sd(z_score, na.rm = TRUE),
+    min_z = min(z_score, na.rm = TRUE),
+    max_z = max(z_score, na.rm = TRUE),
+    q1_z = quantile(z_score, 0.25, na.rm = TRUE),
+    q3_z = quantile(z_score, 0.75, na.rm = TRUE),
+    count = length(z_score)
+  )
+
+vz_cneg_summary <- vz_cneg %>%
+   summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    median_z = median(z_score, na.rm = TRUE),
+    sd_z = sd(z_score, na.rm = TRUE),
+    min_z = min(z_score, na.rm = TRUE),
+    max_z = max(z_score, na.rm = TRUE),
+    q1_z = quantile(z_score, 0.25, na.rm = TRUE),
+    q3_z = quantile(z_score, 0.75, na.rm = TRUE),
+    count = length(z_score)
+  )
+
+vz_cpos_summary
+vz_cneg_summary
+```
+
+```{r}
+# group by covid+ vs. covid-
+# summary statistics 
+# histograms
+# patient-metadata_virscan-z-scores_covid
+# plots
+vz_cpos_hist <- ggplot(vz_cpos, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +  
+  labs(title = "Virscan z-scores for covid+ samples, excluding outliers", x = "z-score (bin size 0.5)", y = "frequency") +
+  theme_minimal()
+# ggsave(filename = "vz_hist_3sd.png", plot = vz_hist_3sd, path = VIZ_PATH)
+
+vz_cneg_hist <- ggplot(vz_cneg, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +  
+  labs(title = "Virscan z-scores for covid- samples, excluding outliers", x = "z-score (bin size 0.5)", y = "frequency") +
+  theme_minimal()
+# ggsave(filename = "vz_hist_3sd.png", plot = vz_hist_3sd, path = VIZ_PATH)
+
+
+vz_cpos_hist
+vz_cneg_hist
+```
+
+
+```{r}
+# group by hospitalized vs. non-hospitalized 
+# histograms based
+vz_hosp <- pat_vz %>% filter(!is.na(Hospitalized == "hospitalized"))
+vz_noth <- pat_vz %>% filter(!is.na(Hospitalized == "non-hospitalized"))
+
+vz_hosp_summary <- vz_hosp %>%
+  summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    median_z = median(z_score, na.rm = TRUE),
+    sd_z = sd(z_score, na.rm = TRUE),
+    min_z = min(z_score, na.rm = TRUE),
+    max_z = max(z_score, na.rm = TRUE),
+    q1_z = quantile(z_score, 0.25, na.rm = TRUE),
+    q3_z = quantile(z_score, 0.75, na.rm = TRUE),
+    count = length(z_score)
+  )
+
+vz_noth_summary <- vz_noth %>%
+  summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    median_z = median(z_score, na.rm = TRUE),
+    sd_z = sd(z_score, na.rm = TRUE),
+    min_z = min(z_score, na.rm = TRUE),
+    max_z = max(z_score, na.rm = TRUE),
+    q1_z = quantile(z_score, 0.25, na.rm = TRUE),
+    q3_z = quantile(z_score, 0.75, na.rm = TRUE),
+    count = length(z_score)
+  )
+
+vz_hosp_summary
+vz_noth_summary
+```
+
+
+```{r}
+vz_hosp_hist <- ggplot(vz_hosp, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +  
+  labs(title = "Virscan z-scores for hospitalized samples, excluding outliers", x = "z-score (bin size 0.5)", y = "frequency") +
+  theme_minimal()
+# ggsave(filename = "vz_hosp_hist.png", plot = vz_hosp_hist, path = VIZ_PATH)
+
+vz_noth_hist <- ggplot(vz_noth, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +  
+  labs(title = "Virscan z-scores for non-hospitalized samples, excluding outliers", x = "z-score (bin size 0.5)", y = "frequency") +
+  theme_minimal()
+# ggsave(filename = "vz_noth_hist.png", plot = vz_noth_hist, path = VIZ_PATH)
+
+
+vz_hosp_hist
+vz_noth_hist
+```
+
+
+
+
+# 241105-TODOs
+- plot stuff for hosp vs not hosp
+- do logistic regression on cleaned data?
+- random forest on cleaned data
+
+
+
+
+
+
+
+
+
+```{r}
+
+  
+```
+
+
+
+
+# TODO: remove; not so useful plots or intermediate steps 
+histogram of original z-scores different resolution 
+```{r}
+# histogram of all z-scores
+z_hist_log_binsize01 <- ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.1) +  # Adjust binwidth as needed
+  labs(title = "histogram of log-scaled Virscan z-scores", x = "z-score (bin size = 0.1)", y = "log(frequency)") +
+  xlim(-10, 10) +  # Adjust range to exclude extreme outliers
+  theme_minimal()
+# ggsave(filename = "pat_vz_hist_log_binsize01.png", plot = z_hist_binsize01, path = VIZ_PATH)
+
+z_hist_log_binsize05 <- ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5) +  # Adjust binwidth as needed
+  labs(title = "histogram of log-scaled Virscan z-scores", x = "z-score (bin size = 0.5)", y = "log(frequency)") +
+  xlim(-10, 10) +  # Adjust range to exclude extreme outliers
+  theme_minimal()
+# ggsave(filename = "pat_vz_hist_log_binsize05.png", plot = z_hist_binsize05, path = VIZ_PATH)
+
+z_hist_log_binsize01
+z_hist_log_binsize05
+```
+
+
+```{r multiple-plots, fig.width=6, fig.height=4}
+# histogram of all z-scores
+z_hist_binsize01 <- ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.1) +  # Adjust binwidth as needed
+  labs(title = "histogram of all Virscan z-scores", x = "z-score (bin size = 0.1)", y = "frequency") +
+  xlim(-10, 10) +  # most values lie in this range
+  theme_minimal()
+ggsave(filename = "pat_vz_hist_binsize01.png", plot = z_hist_binsize01, path = VIZ_PATH)
+
+z_hist_binsize05 <- ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5) +  # Adjust binwidth as needed
+  labs(title = "histogram of all Virscan z-scores", x = "z-score (bin size = 0.5)", y = "frequency") +
+  xlim(-10, 10) +  # Adjust range to exclude extreme outliers
+  theme_minimal()
+ggsave(filename = "pat_vz_hist_binsize05.png", plot = z_hist_binsize05, path = VIZ_PATH)
+
+z_hist_binsize01
+z_hist_binsize05
+```
+
+
+```{r}
+z_hist_log_binsize01
+z_hist_log_binsize05
+```
+
+
+
+
+```{r}
+# histogram of all z-scores on log scale
+ ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(binwidth = 1) +  # Adjust binwidth as needed
+  labs(title = "histogram of all Virscan z-scores (log scale), including outliers", x = "z-Score", y = "log (frequency)") +
+  scale_y_log10() +  
+  theme_minimal()
+ # ggsave(filename = "pat_vz_hist.png", path = VIZ_PATH)
+```
+
+
+
+```{r}
+ggplot(pat_vz, aes(x = z_score)) +
+  geom_histogram(aes(y = after_stat(count + 1)), binwidth = 0.5, fill = "gray") +  # Add offset to counts
+  scale_y_log10(limits = c(1, 1e4)) +
+  scale_x_continuous(limits = c(-10, 60)) +
+  labs(title = "Histogram of All Virscan Z-Scores (Log Scale)", x = "Z-Score", y = "Log (Frequency)") +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+z_hist_3sd_rs1e6 <- ggplot(pat_vz_rs, aes(x = z_score)) +
+  geom_histogram(binwidth = 0.5, fill = "gray", color = "black") +
+  labs(title = "histogram of 10^6 samples of Virscan z-scores", x = "z-score", y = "frequency") +
+  theme_minimal()
+
+z_hist_3sd_rs1e6
+
+```
+
+```{r}
+z_hist_3sd_rs10e6_log <- ggplot(pat_vz_rs, aes(x = z_score)) +
+  geom_histogram(aes(y = after_stat(count + 1)), binwidth = 0.5, fill = "gray", color = "black") +
+  scale_y_log10() +
+  labs(title = "histogram of 10^6 samples of Virscan z-scores, log-scaled", x = "z-score", y = "log(frequency)") +
+  theme_minimal()
+
+z_hist_3sd_rs10e6_log
+
+```
+
+
+

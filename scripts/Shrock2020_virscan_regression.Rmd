@@ -23,7 +23,10 @@ source("../scripts/peptides.R")
 
 ```{r}
 # load processed merged virscan data containing covid, hospitalization, peptide-zscores for each patient sample
-pat_meta_vir_z <- readRDS(file = here::here("./results/processed", "pat_meta_vir_z_2024-10-22.rds"))
+# User supplies path to data directory, and file name they wish to read
+DATA_DIR = "./data/processed"
+PAT_META_VIR_Z_FILE_NAME = "pat_meta_vir_z_2024-10-22.rds"
+pat_meta_vir_z <- readRDS(file = here::here(DATA_DIR, PAT_META_VIR_Z_FILE_NAME))
 ```
 
 ```{r}
@@ -45,8 +48,8 @@ head(pivot_pat_meta_vir_z, 20)
 ```
 
 ```{r}
-# save pat_meta_vir_z; ready to use as input to model
-save_as_rds(pivot_pat_meta_vir_z, "pat_meta_vir_z_input", "./data/")
+# # save pat_meta_vir_z; ready to use as input to model
+# saveRDS(pivot_pat_meta_vir_z, "../data/processed/pat_meta_vir_z_input.rds")
 ```
 
 
@@ -206,5 +209,4 @@ head(tmp_desc_coef_r[c("coef", "Organism", "Species")], 20)
 ```{r}
 head(tmp_desc_coef_h_r[c("coef", "Organism", "Species")], 20)
 ```
-
 
