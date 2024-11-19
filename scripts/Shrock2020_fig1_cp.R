@@ -6,6 +6,8 @@
 # AND THEN MERGE WITH PAT METADATA
 # for the novel coronavirus just randomly select a row from the covlib hits (obviously virscan library doesn't contain novel coronavirus info)
 
+# 24-11-19-TODO: debug get_counts; use get_per_rep_hits for now -- row-based method 
+
 
 ################################################################################
 
@@ -81,6 +83,49 @@ c_cor_hits <- cov_lib %>%
 # FORMAT <- "rds"
 # save_as(cov_lib, COV_LIB_SAVE_PATH, COV_LIB_NAME, FORMAT)
 
+# # first need to merge vir_z_t and pat metadata before filtering positive and negative -- existing "pat_vir_z" is faulty -- has way too many rows
+# # assign patient number to pat_meta (each patient has two replicates (samples) so each row corresponds to a sample not a patient)
+pat_meta$patient <- rownames(pat_meta)
+# 
+# # Create a version of pat_meta with rep_2 and rep_1 stacked into a single column
+pat_meta_long <- pat_meta %>%
+  pivot_longer(cols = c(rep_1, rep_2), names_to = "original_id_column", values_to = "rep_id") %>%
+  select(rep_id, everything())  # remove the helper column
+
+pat_meta_cols <- colnames(pat_meta_long)
+
+# Now perform the left join with tibble_1
+vir_z_pat <- vir_z_t %>%
+  inner_join(pat_meta_long, by = "rep_id") %>%
+  select(!!!pat_meta_cols, everything())
+
+# CHECKPOINT
+# VIR_Z_PAT_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed"
+# VIR_Z_NAME <- "vir_z_pat"
+# FORMAT <- "rds"
+# save_as(vir_z_pat, VIR_Z_SAVE_PATH, VIR_Z_NAME, FORMAT)
+
+# some smaller subsets of the vir_z_pat tibble -- use for testing new features quickly
+sm_vir_z_pat <- vir_z_pat %>% select(1:50) 
+lg_vir_z_pat <- vir_z_pat %>% select(1:10000)    
+
+# filter z-scores for randomly sampled covid-related peptides of interest from covid+ and pre-covid subgroups 
+cov_pat <- vir_z_pat %>% filter(COVID19_status == "positive")
+pre_ctr <- vir_z_pat %>% filter(COVID19_status != "positive")
+
+# # extract peptide ids to match covid+/covid- patients with 
+# v_shc_sample_ids <- v_shc_sample$id
+# c_shc_sample_ids <- c_shc_sample$id
+# v_bcor_sample_ids <- v_bcor_sample$id
+# c_bcor_sample_ids <- c_bcor_sample$id
+# v_chc_sample_ids <- v_chc_sample$id
+# c_chc_sample_ids <- c_shc_sample$id
+# c_ncor_sample_ids <- c_ncor_sample$id
+
+# preserve pat meta columns when filtering 
+PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+
+
 
 ### Want to transpose vir_z dataframe so rows correspond to patients and columns correspond to peptides 
 not_pep_cols <- colnames(vir_z)[!sapply(colnames(vir_z), function(x) grepl("_", x))]
@@ -139,145 +184,23 @@ c_ncor_hits <- filter_hits(cov_lib, NEW_COR)
 # they counted all hits with a z score larger than threshold
 
 Z_THRESH <- 3.5
-test_query <- as.character(v_shc_hits$id)
 
 # TODONOW: expand for entire vir_z_pat and do for all of shc, bcor, chc, ncor
-v_shc_col_cts <- sm_vir_z_pat %>%
-  select(-all_of(PAT_META_COLS)) %>%  # Exclude PAT_META_COLS
-  summarise(across(everything(), ~ sum(. >= Z_THRESH, na.rm = TRUE)))
-
-# # function to subset a z-score dataframe (where rows = peptides, columns = patient replicates) i.e. Virscan or Covscan that matches subset of the virscan or covscan library
-# # and get counts of z-scores that are greater than or equal to some set threshold. Preserves patient metadata in the returned dataframe 
-# # PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
-# # 
-# # param data: a dataframe of z-scores i.e. vir_z or cov_z
-# # param hits: a library (i.e. Virscan Library, Covscan Library) subdataframe containing information on virus strains of interest
-# # param col_or_row: specify "col" if you want a count for each fixed column (peptide) or specify "row" if you want a count for each fixed row (patient replicate)
-# # param threshold: a number threshold for z-scores. Only entries greater than or equal to this threshold will contribute towards the count
-# get_counts <- function(data, hits, threshold, col_or_row = "row") {
-#   PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", 
-#                      "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
-#   
-#   # Validate col_or_row input
-#   if (!col_or_row %in% c("col", "row")) {
-#     stop("Invalid value for 'col_or_row'. Use 'col' for column-based counts or 'row' for row-based counts.")
-#   }
-#   
-#   # Subset data based on hits
-#   data <- data %>%
-#     select(all_of(PAT_META_COLS), matches(hits$id))  # Subset to metadata + columns matching hits
-#   
-#   if (col_or_row == "col") {
-#     # Column-based counts
-#     ct_df <- data %>%
-#       select(-all_of(PAT_META_COLS)) %>%  # Exclude metadata columns
-#       summarise(across(everything(), ~ sum(. >= threshold, na.rm = TRUE)))
-#   } else if (col_or_row == "row") {
-#     # Row-based counts
-#     ct_df <- data %>%
-#       mutate(count = rowSums(across(-all_of(PAT_META_COLS), ~ . >= threshold, na.rm = TRUE)))
-#   }
-#   
-#   return(ct_df)
-# }
-
-
-v_shc_col_cts <- sm_vir_z_pat %>%
-  select(-all_of(PAT_META_COLS)) %>%  # Exclude PAT_META_COLS
-  summarise(across(everything(), ~ sum(. >= Z_THRESH, na.rm = TRUE)))
-
-v_shc_col_cts <- get_counts(data = md_vir_z_pat, hits)
-
-# TODO confirm this -- in the figure they use row_based counts i.e. counts of peptide hits per patient replicate
-
-
-
-
+per_rep_shc_hits <- get_per_rep_hit(vir_z_pat, v_shc_hits, Z_THRESH)
+per_rep_bcor_hits <- get_per_rep_hit(vir_z_pat, v_bcor_hits, Z_THRESH)
+per_rep_chc_hits <- get_per_rep_hit(vir_z_pat, v_chc_hits, Z_THRESH)
+per_rep_ncor_hits <- get_per_rep_hit(vir_z_pat, v_ncor_hits, Z_THRESH)
   
-filter_hits(data = vir_z_pat, patterns = v_shc_hits$id)
+#CHECKPOINT 
+PER_REP_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed/per_rep_hits"
+PER_REP_NAMES <- c("per_rep_shc_hits", "per_rep_bcor_hits", "per_rep_chc_hits", "per_rep_ncor_hits")
+FORMAT <- "rds"
+# save_as(vir_z_t, PER_REP_SAVE_PATH, PER_REP_NAMES, FORMAT)
+lapply(PER_REP_NAMES, function(name) {
+  object <- get(name)
+  save_as(object = object, save_path = PER_REP_SAVE_PATH, name = name, format = FORMAT)
+})
 
-### TESTTT
-# Check the logical matrix
-test <- vir_z_pat %>%
-  select(-all_of(PAT_META_COLS)) %>%
-  mutate(across(everything(), ~ . >= Z_THRESH))
-
-# Check the row sums
-vir_z_pat %>%
-  select(-all_of(PAT_META_COLS)) %>%
-  mutate(row_sums = rowSums(across(everything(), ~ . >= Z_THRESH)))
-
-
-# # out of hits, randomly sample one row per subvariety of coronavirus 
-# SHC_QUERIES <- c("SARS", "Middle East")
-# v_shc_sample <- sample_hits(v_shc_hits, SHC_QUERIES)
-# c_shc_sample <- sample_hits(c_shc_hits, SHC_QUERIES)
-# 
-# BCOR_QUERIES <- c("279", "Rp3", "HKU3") # Bat Coronaviruses
-# v_bcor_sample <- sample_hits(v_bcor_hits, BCOR_QUERIES)
-# c_bcor_sample <- sample_hits(c_bcor_hits, BCOR_QUERIES)
-# 
-# CHC_QUERIES <- c("HKU1", "229E", "NL63", "OC43") # Common Human Coronaviruses 
-# v_chc_sample <- sample_hits(v_chc_hits, CHC_QUERIES)
-# c_chc_sample <- sample_hits(c_chc_hits, CHC_QUERIES)
-
-# c_ncor_sample <- c_ncor_hits %>% slice_sample(n=1)
-# v_bcor_sample <- v_bcor_hits %>% slice_sample(n=1)
-# v_chc_sample <- v_chc_hits %>% slice_sample(n=1)
-# v_ncor_sample <- v_ncor_hits %>% slice_sample(n=1)
-# # covlib hits
-# c_shc_sample <- c_shc_hits %>% slice_sample(n=1)
-# c_bcor_sample <- c_bcor_hits %>% slice_sample(n=1)
-# c_chc_sample <- c_chc_hits %>% slice_sample(n=1)
-# c_ncor_sample <- c_ncor_hits %>% slice_sample(n=1)
-
-
-# # first need to merge vir_z_t and pat metadata before filtering positive and negative -- existing "pat_vir_z" is faulty -- has way too many rows
-# # assign patient number to pat_meta (each patient has two replicates (samples) so each row corresponds to a sample not a patient)
-pat_meta$patient <- rownames(pat_meta)
-# 
-# # Create a version of pat_meta with rep_2 and rep_1 stacked into a single column
-pat_meta_long <- pat_meta %>%
-  pivot_longer(cols = c(rep_1, rep_2), names_to = "original_id_column", values_to = "rep_id") %>%
-  select(rep_id, everything())  # remove the helper column
-
-pat_meta_cols <- colnames(pat_meta_long)
-
-# Now perform the left join with tibble_1
-vir_z_pat <- vir_z_t %>%
-  inner_join(pat_meta_long, by = "rep_id") %>%
-  select(!!!pat_meta_cols, everything())
-
-# CHECKPOINT
-# VIR_Z_PAT_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed"
-# VIR_Z_NAME <- "vir_z_pat"
-# FORMAT <- "rds"
-# save_as(vir_z_pat, VIR_Z_SAVE_PATH, VIR_Z_NAME, FORMAT)
-
-# some smaller subsets of the vir_z_pat tibble -- use for testing new features quickly
-sm_vir_z_pat <- vir_z_pat %>% slice(1:10) %>% select(1:20) 
-md_vir_z_pat <- vir_z_pat %>% slice(1:50) %>% select(1:50) 
-  
-# filter z-scores for randomly sampled covid-related peptides of interest from covid+ and pre-covid subgroups 
-cov_pat <- vir_z_pat %>% filter(COVID19_status == "positive")
-pre_ctr <- vir_z_pat %>% filter(COVID19_status != "positive")
-
-
-
-
-
-# # extract peptide ids to match covid+/covid- patients with 
-# v_shc_sample_ids <- v_shc_sample$id
-# c_shc_sample_ids <- c_shc_sample$id
-# v_bcor_sample_ids <- v_bcor_sample$id
-# c_bcor_sample_ids <- c_bcor_sample$id
-# v_chc_sample_ids <- v_chc_sample$id
-# c_chc_sample_ids <- c_shc_sample$id
-# c_ncor_sample_ids <- c_ncor_sample$id
-
-# preserve pat meta columns when filtering 
-PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
-cov_pat_v_shc <- cov_pat %>% select(any_of(c(PAT_META_COLS, v_shc_sample$id)))
 
 ### TEST HEATMAP FOR A SMALL NUMBER OF CORONAVIRUSES ##### 
 
@@ -335,63 +258,63 @@ v_sample_ids <- c(v_shc_sample$id, v_bcor_sample$id, v_chc_sample$id)
 c_sample_ids <- c(c_shc_sample$id, c_bcor_sample$id, c_shc_sample$id, c_ncor_sample$id)
 
 
-# Assume your tibble is called cov_pat_v_shc
-# Transpose the tibble
-v_org_names <- id_to_org(vir_lib, v_sample_ids)  # Use the get_organisms function to map IDs to organism names
-c_org_names <- id_to_org(cov_lib, c_sample_ids)
-c_org_names <- c_org_names[1:length(c_org_names)]# contains two entries for "SARS covid 2 so discount the second entry"
-c_sample_ids <- c_sample_ids[c_sample_ids %in% names(c_org_names)] # 56158 does not have corresponding names in c_org_names
-
-cov_v_z <- vir_z_pat %>% 
-  select(c(PAT_META_COLS, all_of(as.character(v_sample_ids)))) %>%
-  rename_with(~ v_org_names[.], .cols = all_of(as.character(v_sample_ids))) %>%
-  arrange(COVID19_status)
-
-cov_c_z <- vir_z_pat %>% 
-  select(c(PAT_META_COLS,  all_of(as.character(c_sample_ids)))) %>%
-  rename_with(~ c_org_names[.], .cols = all_of(as.character(c_sample_ids))) %>%
-  arrange(COVID19_status)
-
-# Step 1: Filter and select the relevant columns
-# Select patient ID, COVID-19 status, and the columns in v_org_names
-cov_v_z_subset <- cov_v_z %>%
-  select(patient, COVID19_status, all_of(v_org_names))
-
-# Step 2: Transpose the subset and pivot it for plotting, handling duplicates
-# Transpose so each virus becomes a row and each patient becomes a column
-cov_v_z_long <- cov_v_z_subset %>%
-  pivot_longer(cols = -c(patient, COVID19_status), names_to = "Virus", values_to = "Value") %>%
-  pivot_wider(names_from = patient, values_from = Value, values_fn = list(Value = mean))  # Use `mean` to handle duplicates
-
-# Convert the data to a long format for ggplot, excluding `COVID19_status`
-cov_v_z_long <- cov_v_z_long %>%
-  pivot_longer(cols = -Virus, names_to = "Patient", values_to = "Value") %>%
-  mutate(Value = as.numeric(Value))  # Ensure Value is numeric
-
-# Step 3: Add COVID-19 status information for plotting
-# Merge to add COVID19_status as a column based on the patient ID
-cov_v_z_long <- cov_v_z_long %>%
-  left_join(cov_v_z_subset %>% select(patient, COVID19_status), by = c("Patient" = "patient"))
-
-# Step 4: Plot the heatmap
-# Determine positions to add the red separator line
-separator_position <- cov_v_z_long %>%
-  group_by(COVID19_status) %>%
-  summarize(pos = max(as.numeric(factor(Patient)))) %>%
-  filter(COVID19_status == "negative") %>%
-  pull(pos)
-
-ggplot(cov_v_z_long, aes(x = factor(Patient, levels = unique(Patient)), y = Virus, fill = Value)) +
-  geom_tile() +
-  scale_fill_gradient(low = "blue", high = "red") +  # Darker colors for higher values
-  theme_minimal() +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.text.y = element_text(size = 10),
-        axis.title.y = element_blank(),
-        axis.title.x = element_blank()) +
-  labs(title = "Heatmap of Virus Response by Patient") +
-  geom_vline(xintercept = separator_position + 0.5, color = "red", size = 1.5)  # Add red separator line
+# # Assume your tibble is called cov_pat_v_shc
+# # Transpose the tibble
+# v_org_names <- id_to_org(vir_lib, v_sample_ids)  # Use the get_organisms function to map IDs to organism names
+# c_org_names <- id_to_org(cov_lib, c_sample_ids)
+# c_org_names <- c_org_names[1:length(c_org_names)]# contains two entries for "SARS covid 2 so discount the second entry"
+# c_sample_ids <- c_sample_ids[c_sample_ids %in% names(c_org_names)] # 56158 does not have corresponding names in c_org_names
+# 
+# cov_v_z <- vir_z_pat %>% 
+#   select(c(PAT_META_COLS, all_of(as.character(v_sample_ids)))) %>%
+#   rename_with(~ v_org_names[.], .cols = all_of(as.character(v_sample_ids))) %>%
+#   arrange(COVID19_status)
+# 
+# cov_c_z <- vir_z_pat %>% 
+#   select(c(PAT_META_COLS,  all_of(as.character(c_sample_ids)))) %>%
+#   rename_with(~ c_org_names[.], .cols = all_of(as.character(c_sample_ids))) %>%
+#   arrange(COVID19_status)
+# 
+# # Step 1: Filter and select the relevant columns
+# # Select patient ID, COVID-19 status, and the columns in v_org_names
+# cov_v_z_subset <- cov_v_z %>%
+#   select(patient, COVID19_status, all_of(v_org_names))
+# 
+# # Step 2: Transpose the subset and pivot it for plotting, handling duplicates
+# # Transpose so each virus becomes a row and each patient becomes a column
+# cov_v_z_long <- cov_v_z_subset %>%
+#   pivot_longer(cols = -c(patient, COVID19_status), names_to = "Virus", values_to = "Value") %>%
+#   pivot_wider(names_from = patient, values_from = Value, values_fn = list(Value = mean))  # Use `mean` to handle duplicates
+# 
+# # Convert the data to a long format for ggplot, excluding `COVID19_status`
+# cov_v_z_long <- cov_v_z_long %>%
+#   pivot_longer(cols = -Virus, names_to = "Patient", values_to = "Value") %>%
+#   mutate(Value = as.numeric(Value))  # Ensure Value is numeric
+# 
+# # Step 3: Add COVID-19 status information for plotting
+# # Merge to add COVID19_status as a column based on the patient ID
+# cov_v_z_long <- cov_v_z_long %>%
+#   left_join(cov_v_z_subset %>% select(patient, COVID19_status), by = c("Patient" = "patient"))
+# 
+# # Step 4: Plot the heatmap
+# # Determine positions to add the red separator line
+# separator_position <- cov_v_z_long %>%
+#   group_by(COVID19_status) %>%
+#   summarize(pos = max(as.numeric(factor(Patient)))) %>%
+#   filter(COVID19_status == "negative") %>%
+#   pull(pos)
+# 
+# ggplot(cov_v_z_long, aes(x = factor(Patient, levels = unique(Patient)), y = Virus, fill = Value)) +
+#   geom_tile() +
+#   scale_fill_gradient(low = "blue", high = "red") +  # Darker colors for higher values
+#   theme_minimal() +
+#   theme(axis.text.x = element_blank(),
+#         axis.ticks.x = element_blank(),
+#         axis.text.y = element_text(size = 10),
+#         axis.title.y = element_blank(),
+#         axis.title.x = element_blank()) +
+#   labs(title = "Heatmap of Virus Response by Patient") +
+#   geom_vline(xintercept = separator_position + 0.5, color = "red", size = 1.5)  # Add red separator line
 
 ### logistic regression on just "cov_v" viruses e.g. combination of severe human coronaviruses, bat coronaviruses and common human coronaviruses 
 cov_v_z_input <- cov_v_z %>%

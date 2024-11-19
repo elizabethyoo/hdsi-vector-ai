@@ -1,3 +1,6 @@
+# 24-11-19-TODO: debug get_counts; use get_per_rep_hits for now -- row-based method 
+
+
 library(Peptides)
 library(readxl)
 library(dplyr)
@@ -52,41 +55,58 @@ sample_hits <- function(data, queries) {
 }
 
 
-# get_counts: function to subset a z-score dataframe (where rows = peptides, columns = patient replicates) i.e. Virscan or Covscan that matches subset of the virscan or covscan library
-# and get counts of z-scores that are greater than or equal to some set threshold. Preserves patient metadata in the returned dataframe 
-# PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
-# 
-# param data: a dataframe of z-scores i.e. vir_z or cov_z
-# param hits: a library (i.e. Virscan Library, Covscan Library) subdataframe containing information on virus strains of interest
-# param col_or_row: specify "col" if you want a count for each fixed column (peptide) or specify "row" if you want a count for each fixed row (patient replicate)
-# param threshold: a number threshold for z-scores. Only entries greater than or equal to this threshold will contribute towards the count
-get_counts <- function(data, hits, threshold, col_or_row = "row") {
-  PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", 
-                     "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
-  
-  # Validate col_or_row input
-  if (!col_or_row %in% c("col", "row")) {
-    stop("Invalid value for 'col_or_row'. Use 'col' for column-based counts or 'row' for row-based counts.")
-  }
-  
-  # Subset data based on hits
-  data <- data %>%
-    select(all_of(PAT_META_COLS), matches(hits$id))  # Subset to metadata + columns matching hits
-  
-  if (col_or_row == "col") {
-    # Column-based counts
-    ct_df <- data %>%
-      select(-all_of(PAT_META_COLS)) %>%  # Exclude metadata columns
-      summarise(across(everything(), ~ sum(. >= threshold, na.rm = TRUE)))
-  } else if (col_or_row == "row") {
-    # Row-based counts
-    ct_df <- data %>%
-      mutate(count = rowSums(across(-all_of(PAT_META_COLS), ~ . >= threshold, na.rm = TRUE))) %>%
-      select(all_of(PAT_META_COLS), count, everything())  # Ensure PAT_META_COLS come first
-  }
-  
-  return(ct_df)
+# get_per_rep_hits: function that, given a replicate by peptide z-score matrix,
+# a sublibrary of select coronavirus strains, a z-score threshold, returns a 
+# param data: z-score matrix where the rows correspond to replicates and the columns
+# correspond to peptides 
+# param hits: sublibrary of select coronavirus strains (some subdataframe of vir_lib or cor_lib)
+# the function will extract ids from this subdataframe
+# param threshold: a number, will classify z-score as a "hit" (=1) if it is 
+# greater than or equal to this threshold and "not hit" (=0) otherwise.
+get_per_rep_hit <- function(data, hits, threshold) {
+  PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+  data %>% 
+    select(all_of(PAT_META_COLS), matches(as.character(hits$id))) %>% # select columns where there's a peptide match
+    mutate(across(-all_of(PAT_META_COLS), ~ ifelse(. >= Z_THRESH, 1, 0))) # convert binary based on threshold
 }
+
+
+# 24-11-19-TODO: debug get_counts; use get_per_rep_hits for now -- row-based method 
+# # get_counts: function to subset a z-score dataframe (where rows = peptides, columns = patient replicates) i.e. Virscan or Covscan that matches subset of the virscan or covscan library
+# # and get counts of z-scores that are greater than or equal to some set threshold. Preserves patient metadata in the returned dataframe 
+# # PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+# # 
+# # param data: a dataframe of z-scores i.e. vir_z or cov_z
+# # param hits: a library (i.e. Virscan Library, Covscan Library) subdataframe containing information on virus strains of interest
+# # param col_or_row: specify "col" if you want a count for each fixed column (peptide) or specify "row" if you want a count for each fixed row (patient replicate)
+# # param threshold: a number threshold for z-scores. Only entries greater than or equal to this threshold will contribute towards the count
+# get_counts <- function(data, hits, threshold, col_or_row = "row") {
+#   PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", 
+#                      "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+#   
+#   # Validate col_or_row input
+#   if (!col_or_row %in% c("col", "row")) {
+#     stop("Invalid value for 'col_or_row'. Use 'col' for column-based counts or 'row' for row-based counts.")
+#   }
+#   
+#   # Subset data based on hits
+#   data <- data %>%
+#     select(all_of(PAT_META_COLS), matches(as.character(hits$id)))  # Subset to metadata + columns matching hits
+#   
+#   if (col_or_row == "col") {
+#     # Column-based counts
+#     ct_df <- data %>%
+#       select(-all_of(PAT_META_COLS)) %>%  # Exclude metadata columns
+#       summarise(across(everything(), ~ sum(. >= threshold, na.rm = TRUE)))
+#   } else if (col_or_row == "row") {
+#     # Row-based counts
+#     ct_df <- data %>%
+#       mutate(count = rowSums(across(-all_of(PAT_META_COLS), ~ . >= threshold, na.rm = TRUE))) %>%
+#       select(all_of(PAT_META_COLS), count, everything())  # Ensure PAT_META_COLS come first
+#   }
+#   
+#   return(ct_df)
+# }
 
 # Helper function to save intermediate results in one of the three formats: RDS, CSV, or JSON.
 # Creates a subdirectory to place the file if it does not exist, and generates a file name based on user input and date
