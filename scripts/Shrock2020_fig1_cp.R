@@ -184,22 +184,68 @@ c_ncor_hits <- filter_hits(cov_lib, NEW_COR)
 # they counted all hits with a z score larger than threshold
 
 Z_THRESH <- 3.5
-
-# TODONOW: expand for entire vir_z_pat and do for all of shc, bcor, chc, ncor
 per_rep_shc_hits <- get_per_rep_hit(vir_z_pat, v_shc_hits, Z_THRESH)
 per_rep_bcor_hits <- get_per_rep_hit(vir_z_pat, v_bcor_hits, Z_THRESH)
 per_rep_chc_hits <- get_per_rep_hit(vir_z_pat, v_chc_hits, Z_THRESH)
 per_rep_ncor_hits <- get_per_rep_hit(vir_z_pat, v_ncor_hits, Z_THRESH)
-  
+
+# per each replicate, need to sum across binary columns to get total number of hits per class of coronavirus peptides n 
+per_rep_shc_count <- per_rep_shc_hits %>% mutate(shc_count = rowSums(across(-PAT_META_COLS))) %>% select(PAT_META_COLS, shc_count)
+per_rep_bcor_count <- per_rep_bcor_hits %>% mutate(bcor_count = rowSums(across(-PAT_META_COLS))) %>% select(PAT_META_COLS, bcor_count)
+per_rep_chc_count <- per_rep_chc_hits %>% mutate(chc_count = rowSums(across(-PAT_META_COLS))) %>% select(PAT_META_COLS, chc_count)
+per_rep_ncor_count <- per_rep_ncor_hits %>% mutate(ncor_count = rowSums(across(-PAT_META_COLS))) %>% select(PAT_META_COLS, ncor_count)
+
+count_dfs <- list(per_rep_shc_count, per_rep_bcor_count, per_rep_chc_count, per_rep_ncor_count)
+counts_pos <- reduce(count_dfs, ~ full_join(.x, .y, by = PAT_META_COLS))
+counts_pos <- arrange(counts_pos, COVID19_status)
+
+ct_cols = c("shc_count", "bcor_count","chc_count", "ncor_count")
+
 #CHECKPOINT 
-PER_REP_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed/per_rep_hits"
-PER_REP_NAMES <- c("per_rep_shc_hits", "per_rep_bcor_hits", "per_rep_chc_hits", "per_rep_ncor_hits")
-FORMAT <- "rds"
-# save_as(vir_z_t, PER_REP_SAVE_PATH, PER_REP_NAMES, FORMAT)
-lapply(PER_REP_NAMES, function(name) {
-  object <- get(name)
-  save_as(object = object, save_path = PER_REP_SAVE_PATH, name = name, format = FORMAT)
-})
+# PER_REP_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed/per_rep_hits"
+# COUNT_NAMES <- c("per_rep_shc_count", "per_rep_bcor_count", "per_rep_chc_count", "per_rep_ncor_count")
+# FORMAT <- "rds"
+# lapply(COUNT_NAMES, function(name) {
+#   object <- get(name)
+#   save_as(object = object, save_path = PER_REP_SAVE_PATH, name = name, format = FORMAT)
+# })
+# save_as(merged_count_dfs, PER_REP_SAVE_PATH, "merged_counts", "rds")
+
+
+library(ggplot2)
+library(tidyr)
+
+counts_pos <- merged_count_dfs %>% filter(COVID19_status == "positive")
+counts_neg <- merged_count_dfs %>% filter(COVID19_status == "negative")
+
+# Reshape the data into long format
+heatmap_data_pos <- counts_pos %>%
+  select(rep_id, shc_count, bcor_count, chc_count, ncor_count) %>%
+  pivot_longer(cols = c(shc_count, bcor_count, chc_count, ncor_count),
+               names_to = "Count_Type", 
+               values_to = "Count")
+# Reshape the data into long format
+heatmap_data_neg <- counts_neg %>%
+  select(rep_id,shc_count, bcor_count, chc_count, ncor_count) %>%
+  pivot_longer(cols = c(shc_count, bcor_count, chc_count, ncor_count),
+               names_to = "Count_Type", 
+               values_to = "Count")
+
+# Create the heatmaps
+ggplot(heatmap_data_pos, aes(x = rep_id , y = Count_Type, fill = Count)) +
+  geom_tile(color = "white") +  # Add gridlines
+  scale_fill_gradient(low = "white", high = "blue") +  # Customize color gradient
+  labs(title = "Covid + patients peptide hits", x = "replicates", y = "virus class", fill = "number of hits") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank())  # Rotate x-axis labels
+
+ggplot(heatmap_data_neg, aes(x = rep_id , y = Count_Type, fill = Count)) +
+  geom_tile(color = "white") +  # Add gridlines
+  scale_fill_gradient(low = "white", high = "blue") +  # Customize color gradient
+  labs(title = "Pre-Covid controls peptide hits", x = "replicates", y = "virus class", fill = "number of hits") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank())  # Rotate x-axis labels
+
 
 
 ### TEST HEATMAP FOR A SMALL NUMBER OF CORONAVIRUSES ##### 
@@ -238,6 +284,8 @@ ggplot(cov_v_shc_z_long, aes(x = Patient, y = Virus, fill = Value)) +
   theme(axis.text.x = element_blank()) +
   labs(title = "Heatmap of Virus Response by Patient",
        x = "Patient Number", y = "Virus")
+
+
 
 ### DUPLICATE WORKING COPY##### 
 library(tidyr)
