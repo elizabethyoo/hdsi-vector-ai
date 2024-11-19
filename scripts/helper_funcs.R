@@ -51,6 +51,43 @@ sample_hits <- function(data, queries) {
   return(result)
 }
 
+
+# get_counts: function to subset a z-score dataframe (where rows = peptides, columns = patient replicates) i.e. Virscan or Covscan that matches subset of the virscan or covscan library
+# and get counts of z-scores that are greater than or equal to some set threshold. Preserves patient metadata in the returned dataframe 
+# PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+# 
+# param data: a dataframe of z-scores i.e. vir_z or cov_z
+# param hits: a library (i.e. Virscan Library, Covscan Library) subdataframe containing information on virus strains of interest
+# param col_or_row: specify "col" if you want a count for each fixed column (peptide) or specify "row" if you want a count for each fixed row (patient replicate)
+# param threshold: a number threshold for z-scores. Only entries greater than or equal to this threshold will contribute towards the count
+get_counts <- function(data, hits, threshold, col_or_row = "row") {
+  PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", 
+                     "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+  
+  # Validate col_or_row input
+  if (!col_or_row %in% c("col", "row")) {
+    stop("Invalid value for 'col_or_row'. Use 'col' for column-based counts or 'row' for row-based counts.")
+  }
+  
+  # Subset data based on hits
+  data <- data %>%
+    select(all_of(PAT_META_COLS), matches(hits$id))  # Subset to metadata + columns matching hits
+  
+  if (col_or_row == "col") {
+    # Column-based counts
+    ct_df <- data %>%
+      select(-all_of(PAT_META_COLS)) %>%  # Exclude metadata columns
+      summarise(across(everything(), ~ sum(. >= threshold, na.rm = TRUE)))
+  } else if (col_or_row == "row") {
+    # Row-based counts
+    ct_df <- data %>%
+      mutate(count = rowSums(across(-all_of(PAT_META_COLS), ~ . >= threshold, na.rm = TRUE))) %>%
+      select(all_of(PAT_META_COLS), count, everything())  # Ensure PAT_META_COLS come first
+  }
+  
+  return(ct_df)
+}
+
 # Helper function to save intermediate results in one of the three formats: RDS, CSV, or JSON.
 # Creates a subdirectory to place the file if it does not exist, and generates a file name based on user input and date
 # 

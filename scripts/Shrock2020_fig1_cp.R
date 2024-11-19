@@ -1,3 +1,16 @@
+################## TODO LOGS ###################################################
+# 24-11-18-TODO -- create separate script for various regression e.g. logistic regression, random forest, LASSO/GROUP LASSO, RIDGE 
+
+# 24-11-18 
+# TODO NO RANDOM SLICING FIRST THRESHOLD AND TAKE COUNT 
+# AND THEN MERGE WITH PAT METADATA
+# for the novel coronavirus just randomly select a row from the covlib hits (obviously virscan library doesn't contain novel coronavirus info)
+
+
+################################################################################
+
+
+
 # set working directory to where script is
 SCRIPT_PATH <- rstudioapi::getSourceEditorContext()$path
 setwd(dirname(SCRIPT_PATH))
@@ -16,6 +29,15 @@ library(styler)
 library(ggplot2)
 source("helper_funcs.R")
 
+
+
+
+
+
+
+
+
+
 DF_NAMES <- c("pat_meta", "cov_z", "vir_z", "cov_lib", "vir_lib")
 FORM_PATH <- "../data/processed/Shrock_2020_formatted"
 FORMAT <- "rds"
@@ -25,6 +47,8 @@ cov_z <- formatted_df_ls$cov_z.rds
 pat_meta <- formatted_df_ls$pat_meta.rds
 vir_lib <- formatted_df_ls$vir_lib.rds
 vir_z <- formatted_df_ls$vir_z.rds
+
+
 
 # PRO_DAT_PATH <- dirname(FORM_PATH) # data/processed
 # VIZ_PATH <- "../results/eda/viz"
@@ -101,8 +125,6 @@ ALL_KEYWORDS <- c(NEW_COR, S_HUM_COR, BAT_COR, C_HUM_COR)
 # ALL_KEYWORDS_SUBSTR <- unlist(str_split(ALL_KEYWORDS,"-"))
 # virlib hits, shc = severe human coronavirus, bcor = bat coronavirus, chc = common human coronavirus, ncor = novel coronavirus
 # Apply the function to each pattern list
-
-
 v_shc_hits <- filter_hits(vir_lib, S_HUM_COR)
 v_bcor_hits <- filter_hits(vir_lib, BAT_COR) # no hits
 v_chc_hits <- filter_hits(vir_lib, C_HUM_COR)
@@ -116,15 +138,57 @@ c_ncor_hits <- filter_hits(cov_lib, NEW_COR)
 # 24-11-12 Update: Do not need to randomly sample for the purposes of replicating 1D...
 # they counted all hits with a z score larger than threshold
 
-sm_vir_z_pat <- vir_z_pat %>% slice(1:10) %>% select(1:20) # Use for testing new features quickly
-
 Z_THRESH <- 3.5
 test_query <- as.character(v_shc_hits$id)
 
-# TODO: expand for entire vir_z_pat and do for all of shc, bcor, chc, ncor
-col_cts <- sm_vir_z_pat %>%
+# TODONOW: expand for entire vir_z_pat and do for all of shc, bcor, chc, ncor
+v_shc_col_cts <- sm_vir_z_pat %>%
   select(-all_of(PAT_META_COLS)) %>%  # Exclude PAT_META_COLS
   summarise(across(everything(), ~ sum(. >= Z_THRESH, na.rm = TRUE)))
+
+# # function to subset a z-score dataframe (where rows = peptides, columns = patient replicates) i.e. Virscan or Covscan that matches subset of the virscan or covscan library
+# # and get counts of z-scores that are greater than or equal to some set threshold. Preserves patient metadata in the returned dataframe 
+# # PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+# # 
+# # param data: a dataframe of z-scores i.e. vir_z or cov_z
+# # param hits: a library (i.e. Virscan Library, Covscan Library) subdataframe containing information on virus strains of interest
+# # param col_or_row: specify "col" if you want a count for each fixed column (peptide) or specify "row" if you want a count for each fixed row (patient replicate)
+# # param threshold: a number threshold for z-scores. Only entries greater than or equal to this threshold will contribute towards the count
+# get_counts <- function(data, hits, threshold, col_or_row = "row") {
+#   PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", 
+#                      "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+#   
+#   # Validate col_or_row input
+#   if (!col_or_row %in% c("col", "row")) {
+#     stop("Invalid value for 'col_or_row'. Use 'col' for column-based counts or 'row' for row-based counts.")
+#   }
+#   
+#   # Subset data based on hits
+#   data <- data %>%
+#     select(all_of(PAT_META_COLS), matches(hits$id))  # Subset to metadata + columns matching hits
+#   
+#   if (col_or_row == "col") {
+#     # Column-based counts
+#     ct_df <- data %>%
+#       select(-all_of(PAT_META_COLS)) %>%  # Exclude metadata columns
+#       summarise(across(everything(), ~ sum(. >= threshold, na.rm = TRUE)))
+#   } else if (col_or_row == "row") {
+#     # Row-based counts
+#     ct_df <- data %>%
+#       mutate(count = rowSums(across(-all_of(PAT_META_COLS), ~ . >= threshold, na.rm = TRUE)))
+#   }
+#   
+#   return(ct_df)
+# }
+
+
+v_shc_col_cts <- sm_vir_z_pat %>%
+  select(-all_of(PAT_META_COLS)) %>%  # Exclude PAT_META_COLS
+  summarise(across(everything(), ~ sum(. >= Z_THRESH, na.rm = TRUE)))
+
+v_shc_col_cts <- get_counts(data = md_vir_z_pat, hits)
+
+# TODO confirm this -- in the figure they use row_based counts i.e. counts of peptide hits per patient replicate
 
 
 
@@ -157,11 +221,6 @@ vir_z_pat %>%
 # v_chc_sample <- sample_hits(v_chc_hits, CHC_QUERIES)
 # c_chc_sample <- sample_hits(c_chc_hits, CHC_QUERIES)
 
-
-# 24-11-18 
-# TODO NO RANDOM SLICING FIRST THRESHOLD AND TAKE COUNT 
-# AND THEN MERGE WITH PAT METADATA
-# for the novel coronavirus just randomly select a row from the covlib hits (obviously virscan library doesn't contain novel coronavirus info)
 # c_ncor_sample <- c_ncor_hits %>% slice_sample(n=1)
 # v_bcor_sample <- v_bcor_hits %>% slice_sample(n=1)
 # v_chc_sample <- v_chc_hits %>% slice_sample(n=1)
@@ -172,7 +231,6 @@ vir_z_pat %>%
 # c_chc_sample <- c_chc_hits %>% slice_sample(n=1)
 # c_ncor_sample <- c_ncor_hits %>% slice_sample(n=1)
 
-# # group patients by covid status
 
 # # first need to merge vir_z_t and pat metadata before filtering positive and negative -- existing "pat_vir_z" is faulty -- has way too many rows
 # # assign patient number to pat_meta (each patient has two replicates (samples) so each row corresponds to a sample not a patient)
@@ -196,12 +254,16 @@ vir_z_pat <- vir_z_t %>%
 # FORMAT <- "rds"
 # save_as(vir_z_pat, VIR_Z_SAVE_PATH, VIR_Z_NAME, FORMAT)
 
+# some smaller subsets of the vir_z_pat tibble -- use for testing new features quickly
+sm_vir_z_pat <- vir_z_pat %>% slice(1:10) %>% select(1:20) 
+md_vir_z_pat <- vir_z_pat %>% slice(1:50) %>% select(1:50) 
+  
+# filter z-scores for randomly sampled covid-related peptides of interest from covid+ and pre-covid subgroups 
 cov_pat <- vir_z_pat %>% filter(COVID19_status == "positive")
 pre_ctr <- vir_z_pat %>% filter(COVID19_status != "positive")
 
-# filter z-scores for randomly sampled covid-related peptides of interest from covid+ and pre-covid subgroups 
-# 24-11-12-TODO calculate p-values? 
-# random forest?
+
+
 
 
 # # extract peptide ids to match covid+/covid- patients with 
