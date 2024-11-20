@@ -2,6 +2,8 @@
 
 # Set-Up & Import #####
 
+LIZ_PATH = "/n/home01/egraff/hdsi-vector-ai/data/Shrock2020_all-data/Shrock_2020.xlsx"
+
 library(pacman)
 p_load(here
        , readr , readxl
@@ -12,14 +14,14 @@ p_load(here
 `%nin%` = Negate(`%in%`)
 expit = function(x) (1+exp(-x))^-1
 
-demo_df = read_excel(path = here("Data", "Shrock_2020.xlsx")
+demo_df = read_excel(path = LIZ_PATH
                      , sheet = "Patient metadata")
 
-covid_lib = read_excel(path = here("Data", "Shrock_2020.xlsx")
+covid_lib = read_excel(path = LIZ_PATH
                        , sheet = "Coronavirus library ") %>% 
   rename(id = `...1`)
 
-covid_IgG = read_excel(path = here("Data", "Shrock_2020.xlsx")
+covid_IgG = read_excel(path = LIZ_PATH
                        , sheet = "Coronavirus screen - IgG Z") %>% 
   mutate(id = as.character(id)) 
 

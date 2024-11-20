@@ -83,6 +83,74 @@ c_cor_hits <- cov_lib %>%
 # FORMAT <- "rds"
 # save_as(cov_lib, COV_LIB_SAVE_PATH, COV_LIB_NAME, FORMAT)
 
+
+### Want to transpose vir_z dataframe so rows correspond to patients and columns correspond to peptides 
+not_pep_cols <- colnames(vir_z)[!sapply(colnames(vir_z), function(x) grepl("_", x))]
+# make a copy of vir_z with only peptide columns i.e. remove group, id columns
+vir_z_cp <- as.data.frame(vir_z[, setdiff(colnames(vir_z), not_pep_cols)])
+# these column names i.e. rep ids all start with an 'X' -- probably artifact from loading "raw" data -- remove here
+vir_z_formatted_colnames <- unlist(lapply(colnames(vir_z_cp), function(x) substr(x, 2, nchar(x))))
+
+# transpose vir_z dataframe 
+vir_z_t <- as_tibble(t(vir_z_cp))
+
+vir_z_t_rownames <- vir_z_formatted_colnames
+vir_z_t_colnames <- c("rep_id", rownames(vir_z_cp))
+
+vir_z_t$rep_id <- vir_z_formatted_colnames
+# colnames(vir_z_t) <- vir_z_t_colnames
+vir_z_t <- vir_z_t %>%
+  rename_with(
+    ~ vir_z_t_colnames[which(vir_z_t_colnames != "rep_id")], 
+    .cols = -rep_id
+  )
+
+names(vir_z_t) <- make.unique(names(vir_z_t))  # Ensure unique names
+names(vir_z_t) <- replace_na(names(vir_z_t), "unnamed_col")  # Replace NA names
+
+vir_z_t <- vir_z_t %>%
+  select(rep_id, everything()) %>% # reorder so rep_id comes first
+  mutate(rep_id = as.character(rep_id)) # convert to character -- pat_meta has rep_id encoded as character
+# CHECKPOINT
+# VIR_Z_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed"
+# VIR_Z_NAME <- "vir_z_t"
+# FORMAT <- "rds"
+# save_as(vir_z_t, VIR_Z_SAVE_PATH, VIR_Z_NAME, FORMAT)
+
+# transpose cov_z dataframe 
+
+# make a copy of vir_z with only peptide columns i.e. remove group, id columns
+cov_z_cp <- cov_z %>% select(-c(group, id))
+# these column names i.e. rep ids all start with an 'X' -- probably artifact from loading "raw" data -- remove here
+cov_z_formatted_colnames <- unlist(lapply(colnames(cov_z_cp), function(x) substr(x, 2, nchar(x))))
+
+# transpose vir_z dataframe -- 24-11-19 update: using data.table for quicker transpose operations... should've done this for virscan stuff too 
+cov_z_t <- as_tibble(t(cov_z_cp))
+
+covid_wide = covid_IgG %>% select(-c(group, input)) %>% 
+  data.table::transpose(make.names = "id", keep.names="SampleID") %>% 
+  as_tibble() 
+
+vir_z_t_rownames <- formatted_colnames
+vir_z_t_colnames <- c("rep_id", rownames(vir_z_cp))
+
+vir_z_t$rep_id <- formatted_colnames
+# colnames(vir_z_t) <- vir_z_t_colnames
+vir_z_t <- vir_z_t %>%
+  rename_with(
+    ~ vir_z_t_colnames[which(vir_z_t_colnames != "rep_id")], 
+    .cols = -rep_id
+  )
+
+names(vir_z_t) <- make.unique(names(vir_z_t))  # Ensure unique names
+names(vir_z_t) <- replace_na(names(vir_z_t), "unnamed_col")  # Replace NA names
+
+vir_z_t <- vir_z_t %>%
+  select(rep_id, everything()) %>% # reorder so rep_id comes first
+  mutate(rep_id = as.character(rep_id)) # convert to character -- pat_meta has rep_id encoded as character
+
+
+
 # # first need to merge vir_z_t and pat metadata before filtering positive and negative -- existing "pat_vir_z" is faulty -- has way too many rows
 # # assign patient number to pat_meta (each patient has two replicates (samples) so each row corresponds to a sample not a patient)
 pat_meta$patient <- rownames(pat_meta)
@@ -98,6 +166,8 @@ pat_meta_cols <- colnames(pat_meta_long)
 vir_z_pat <- vir_z_t %>%
   inner_join(pat_meta_long, by = "rep_id") %>%
   select(!!!pat_meta_cols, everything())
+
+cov_z_pat <- cov_z
 
 # CHECKPOINT
 # VIR_Z_PAT_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed"
@@ -127,39 +197,7 @@ PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status"
 
 
 
-### Want to transpose vir_z dataframe so rows correspond to patients and columns correspond to peptides 
-not_pep_cols <- colnames(vir_z)[!sapply(colnames(vir_z), function(x) grepl("_", x))]
-# make a copy of vir_z with only peptide columns i.e. remove group, id columns
-vir_z_cp <- as.data.frame(vir_z[, setdiff(colnames(vir_z), not_pep_cols)])
-# these column names i.e. rep ids all start with an 'X' -- probably artifact from loading "raw" data -- remove here
-formatted_colnames <- unlist(lapply(colnames(vir_z_cp), function(x) substr(x, 2, nchar(x))))
 
-
-# transpose vir_z dataframe 
-vir_z_t <- as_tibble(t(vir_z_cp))
-
-vir_z_t_rownames <- formatted_colnames
-vir_z_t_colnames <- c("rep_id", rownames(vir_z_cp))
-
-vir_z_t$rep_id <- formatted_colnames
-# colnames(vir_z_t) <- vir_z_t_colnames
-vir_z_t <- vir_z_t %>%
-  rename_with(
-    ~ vir_z_t_colnames[which(vir_z_t_colnames != "rep_id")], 
-    .cols = -rep_id
-  )
-
-names(vir_z_t) <- make.unique(names(vir_z_t))  # Ensure unique names
-names(vir_z_t) <- replace_na(names(vir_z_t), "unnamed_col")  # Replace NA names
-
-vir_z_t <- vir_z_t %>%
-  select(rep_id, everything()) %>% # reorder so rep_id comes first
-  mutate(rep_id = as.character(rep_id)) # convert to character -- pat_meta has rep_id encoded as character
-# CHECKPOINT
-# VIR_Z_SAVE_PATH <- "/n/home01/egraff/hdsi-vector-ai/data/processed"
-# VIR_Z_NAME <- "vir_z_t"
-# FORMAT <- "rds"
-# save_as(vir_z_t, VIR_Z_SAVE_PATH, VIR_Z_NAME, FORMAT)
 
 # filter covid-variant-specific peptide information from the Virscan library based on keywords
 NEW_COR <- c("SARS-Cov-2", "Severe acute respiratory syndrome coronavirus 2")
