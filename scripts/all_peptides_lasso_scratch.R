@@ -68,6 +68,8 @@ set.seed(1031)
 z_scores <- as.matrix(pivot_pat_meta_vir_z[, -c(1:5)]) # just the z-score columns
 cov_stat <- pivot_pat_meta_vir_z$COVID19_status
 lasso_cov_z <- cv.glmnet(x=z_scores, y=cov_stat, alpha=1,family="binomial",type.measure = "mse")
+# LASSO_COV_Z_FNAME <- "all_peptides_lasso_fit"
+# save_as(object = lasso_cov_z , save_path = LIZ_RESULTS_DIR, name = LASSO_COV_Z_FNAME, format = "rds")
 
 plot(lasso_cov_z)
 title(main="LASSO covid status vs. all z-scores")
@@ -107,7 +109,7 @@ tmp_desc_coef_tb <- tmp_desc_coef %>% slice(1:20) %>%
     title = "Top 20 Coefficients from LASSO on All Peptides"
   )
 
-webshot::install_phantomjs() # for saving to .png
-gtsave(data = tmp_desc_coef_tb, filename = "all_virscan_peps_lasso_coeffs_tb.html", path = LIZ_RESULTS_DIR)
+# webshot::install_phantomjs() # for saving to .png but doesn't work -- could be a FAS server thing
+# gtsave(data = tmp_desc_coef_tb, filename = "all_virscan_peps_lasso_coeffs_tb.html", path = LIZ_RESULTS_DIR)
 
 print(tmp_desc_coef)
