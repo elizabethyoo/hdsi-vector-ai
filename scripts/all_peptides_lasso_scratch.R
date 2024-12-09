@@ -1,17 +1,4 @@
-library(Peptides)
-library(readxl)
-library(dplyr)
-library(readr)
-library(tidyr)
-library(tibble)
-library(data.table)
-library(glmnet)
-library(gt)
-
-# set working directory to where script is
-SCRIPT_PATH <- rstudioapi::getSourceEditorContext()$path
-setwd(dirname(SCRIPT_PATH))
-source("helper_funcs.R")
+ 
 
 # set working directory to where script is
 here::i_am("scripts/all_peptides_lasso_scratch.R")
