@@ -4,15 +4,18 @@
 # load packages
 library(glmnet)
 library(here)
+library(dplyr)
 
 # anchor project root directory 
 here::i_am("scripts/01_run_regression.R")
+
 
 # Function to perform LASSO regression with optional train/validate/test split and visualization
 run_lasso_regression <- function(X, y, split_type = c("train_validate_test", "train_test"), train_ratio = 0.6, valid_ratio = 0.2, visualize = FALSE) {
     split_type <- match.arg(split_type)
     
     n <- nrow(X)
+    row_names <- rownames(X)
     
     if (split_type == "train_validate_test") {
         train_idx <- sample(1:n, size = train_ratio * n)
@@ -58,7 +61,7 @@ run_lasso_regression <- function(X, y, split_type = c("train_validate_test", "tr
             dev.off()
         }
         
-        return(list(valid_mse = mse_valid, test_mse = mse_test, coefficients = lasso_coefficients))
+        return(list(valid_mse = mse_valid, test_mse = mse_test, coefficients = lasso_coefficients, row_names = row_names))
         
     } else if (split_type == "train_test") {
         train_idx <- sample(1:n, size = train_ratio * n)
@@ -95,11 +98,35 @@ run_lasso_regression <- function(X, y, split_type = c("train_validate_test", "tr
         abline(v = log(cv_fit$lambda.min), col = "blue", lty = 2)
         legend("topright", legend = c("MSE", "Optimal Lambda"), col = c("red", "blue"), pch = 19, lty = 1:2)
         dev.off()
-        }
-        
         return(list(test_mse = mse_test, coefficients = lasso_coefficients))
     }
 }
 
-# example usage for run_lasso_regression
-result <- run_lasso_regression(X = X_syn, y = y_syn, visualize = TRUE)
+
+vir_z_pat <- readRDS(here::here("data", "processed", "vir_z_pat.rds"))
+vir_z_pat <- as_tibble(vir_z_pat)
+PAT_META_COLS <- c("rep_id", "Sample", "Library", "IP_reagent", "COVID19_status", "Hospitalized", "Pull_down_antibody", "patient", "original_id_column")
+X_vir_z <- vir_z_pat %>% select(-all_of(PAT_META_COLS))
+# convert y to numeric 1 if "positive" and 0 if "negative"
+y_vir_z <- vir_z_pat %>% mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>% pull(COVID19_status)
+
+# Assuming X_syn is a tibble with column names and row names
+# and y_syn is a vector with row names matching X_syn
+# Run the LASSO regression
+result <- run_lasso_regression(X = as.matrix(X_vir_z), y = y_vir_z, visualize = TRUE)
+
+# Save the result to a file for inspection
+saveRDS(result, here::here("results", "lasso_result.rds"))
+
+# Log the result to the SLURM output file
+cat("LASSO regression results:\n")
+print(result)
+
+# # Map the coefficients back to their corresponding column names
+# coefficients <- result$coefficients
+# coefficients_df <- as.data.frame(as.matrix(coefficients))
+# coefficients_df$feature <- rownames(coefficients_df)
+# coefficients_df <- coefficients_df[coefficients_df$feature != "(Intercept)", ]
+
+# # Print the coefficients with their corresponding feature names
+# print(coefficients_df)
