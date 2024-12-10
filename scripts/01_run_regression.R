@@ -17,6 +17,9 @@ run_lasso_regression <- function(X, y, split_type = c("train_validate_test", "tr
     n <- nrow(X)
     row_names <- rownames(X)
     
+    # Initialize result list
+    result <- list()
+    
     if (split_type == "train_validate_test") {
         train_idx <- sample(1:n, size = train_ratio * n)
         valid_idx <- setdiff(sample(1:n, size = (train_ratio + valid_ratio) * n), train_idx)
@@ -44,24 +47,39 @@ run_lasso_regression <- function(X, y, split_type = c("train_validate_test", "tr
         # Coefficients at the best lambda
         lasso_coefficients <- coef(cv_fit, s = best_lambda)
         
+        # Save relevant information to result
+        result$model <- cv_fit
+        result$best_lambda <- best_lambda
+        result$mse_valid <- mse_valid
+        result$mse_test <- mse_test
+        result$coefficients <- as.matrix(lasso_coefficients)  # Convert to matrix for easier handling
+        result$lambda_sequence <- cv_fit$lambda
+        result$cvm <- cv_fit$cvm  # Mean cross-validation errors
+        result$train_idx <- train_idx
+        result$valid_idx <- valid_idx
+        result$test_idx <- test_idx
+        
         if (visualize) {
             # Visualization of the process of optimizing lambda
-            png(filename = here::here("results", paste0("01_lasso_fit_lambda_", deparse(substitute(y)), "_", deparse(substitute(X)), ".png")))
+            plot_path_lambda <- here::here("results", paste0("01_lasso_fit_lambda_", deparse(substitute(y)), "_", deparse(substitute(X)), ".png"))
+            png(filename = plot_path_lambda)
             plot(cv_fit)
             abline(v = log(cv_fit$lambda.min), col = "blue", lty = 2) # Mark the optimal lambda
             title("Cross-Validation Curve for LASSO")
             dev.off()
             
             # Visualization of how the MSEs evolve with the process
-            png(filename = here::here("results", paste0("01_lasso_fit_mse_lambda_", deparse(substitute(y)), "_", deparse(substitute(X)), ".png")))
+            plot_path_mse <- here::here("results", paste0("01_lasso_fit_mse_lambda_", deparse(substitute(y)), "_", deparse(substitute(X)), ".png"))
+            png(filename = plot_path_mse)
             plot(log(cv_fit$lambda), cv_fit$cvm, type = "b", pch = 19, col = "red", xlab = "Log(Lambda)", ylab = "Mean Squared Error", main = "MSE vs Log(Lambda)")
             points(log(cv_fit$lambda.min), min(cv_fit$cvm), col = "blue", pch = 19)
             abline(v = log(cv_fit$lambda.min), col = "blue", lty = 2)
             legend("topright", legend = c("MSE", "Optimal Lambda"), col = c("red", "blue"), pch = 19, lty = 1:2)
             dev.off()
+            
+            result$plot_path_lambda <- plot_path_lambda
+            result$plot_path_mse <- plot_path_mse
         }
-        
-        return(list(valid_mse = mse_valid, test_mse = mse_test, coefficients = lasso_coefficients, row_names = row_names))
         
     } else if (split_type == "train_test") {
         train_idx <- sample(1:n, size = train_ratio * n)
@@ -84,24 +102,20 @@ run_lasso_regression <- function(X, y, split_type = c("train_validate_test", "tr
         
         # Coefficients at the best lambda
         lasso_coefficients <- coef(cv_fit, s = best_lambda)
-        # Visualization of the process of optimizing lambda
-        png(filename = here::here("results", paste0("01_lasso_fit_lambda_", deparse(substitute(y)), "_", deparse(substitute(X)), ".png")))
-        plot(cv_fit)
-        abline(v = log(cv_fit$lambda.min), col = "blue", lty = 2) # Mark the optimal lambda
-        title("Cross-Validation Curve for LASSO")
-        dev.off()
         
-        # Visualization of how the MSEs evolve with the process
-        png(filename = here::here("results", paste0("01_lasso_fit_mse_lambda_", deparse(substitute(y)), "_", deparse(substitute(X)), ".png")))
-        plot(log(cv_fit$lambda), cv_fit$cvm, type = "b", pch = 19, col = "red", xlab = "Log(Lambda)", ylab = "Mean Squared Error", main = "MSE vs Log(Lambda)")
-        points(log(cv_fit$lambda.min), min(cv_fit$cvm), col = "blue", pch = 19)
-        abline(v = log(cv_fit$lambda.min), col = "blue", lty = 2)
-        legend("topright", legend = c("MSE", "Optimal Lambda"), col = c("red", "blue"), pch = 19, lty = 1:2)
-        dev.off()
-        return(list(test_mse = mse_test, coefficients = lasso_coefficients))
+        # Save relevant information to result
+        result$model <- cv_fit
+        result$best_lambda <- best_lambda
+        result$mse_test <- mse_test
+        result$coefficients <- as.matrix(lasso_coefficients)
+        result$lambda_sequence <- cv_fit$lambda
+        result$cvm <- cv_fit$cvm
+        result$train_idx <- train_idx
+        result$test_idx <- test_idx
     }
+    
+    return(result)
 }
-
 
 vir_z_pat <- readRDS(here::here("data", "processed", "vir_z_pat.rds"))
 vir_z_pat <- as_tibble(vir_z_pat)
@@ -114,12 +128,9 @@ y_vir_z <- vir_z_pat %>% mutate(COVID19_status = ifelse(is.na(COVID19_status), 0
 # and y_syn is a vector with row names matching X_syn
 # Run the LASSO regression
 result <- run_lasso_regression(X = as.matrix(X_vir_z), y = y_vir_z, visualize = TRUE)
-
-# Save the result to a file for inspection
-saveRDS(result, here::here("results", "lasso_result.rds"))
-
-# Log the result to the SLURM output file
-cat("LASSO regression results:\n")
+# Save lasso results for future inspection 
+saveRDS(result, here::here("results", "lasso_full_result.rds"))
+result <- readRDS(here::here("results", "lasso_full_result.rds"))
 print(result)
 
 # # Map the coefficients back to their corresponding column names
