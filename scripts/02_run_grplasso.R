@@ -30,7 +30,6 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
         groups <- apply(loading_matrix, 1, which.max)  # Assign each feature to its strongest PC
     }
 
-    # NOTE: Do not validate `length(groups) == p` for correlation or PCA-based grouping.
     
     # Initialize result list
     result <- list()
@@ -84,8 +83,12 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
     test_mse <- mean((Y_test - Y_test_pred)^2)
     
     # Save coefficients
-    coefficients <- coef(final_model)
-    
+    coefficients <- as.numeric(coef(final_model))
+    # Dataframe with coefficients in descending order of magnitude, their corresponding group, and index in the original data matrix
+    coefficients <- data.frame(coef = coefficients, group = groups, index = 1:p) %>%
+        arrange(desc(abs(coef)))
+
+
     # Save results
     result$model <- final_model
     result$best_lambda <- best_lambda
@@ -110,60 +113,37 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
     return(result)
 }
 
-
-
 #### TEST ####
-
-# simulate data to test the function
+# Simulate data
 set.seed(123)
+n <- 100  # Number of samples
+p <- 50   # Number of features
+X <- matrix(rnorm(n * p), nrow = n, ncol = p)
 
-# Number of samples (rows) and features (columns)
-n <- 50
-p <- 200
+# Simulate sparse data
+beta <- rep(0, p)
+sparse_indices <- sample(1:p, size = 10)  # Only 10 non-zero coefficients
+beta[sparse_indices] <- rnorm(10)
 
-# Generate correlated features in blocks
-block_size <- 20
-num_blocks <- p / block_size
-X <- matrix(0, nrow = n, ncol = p)
-for (i in seq_len(num_blocks)) {
-  idx <- ((i - 1) * block_size + 1):(i * block_size)
-  block <- matrix(rnorm(n * block_size), n, block_size)
-  X[, idx] <- sweep(block, 2, rnorm(block_size), `+`)  # Add shared noise
-}
+# Generate response variable with some noise
+Y <- X %*% beta + rnorm(n)
 
-# Generate response variable Y as a linear combination of a subset of features
-true_beta <- c(rep(2, 10), rep(0, p - 10))  # Sparse coefficients
-Y <- X %*% true_beta + rnorm(n, sd = 1)
+# Run the function with the simulated data
+result <- run_grplasso_reg(X, Y, groups = "corr", split_type = "train_validate_test", visualize = TRUE)
 
-result_default <- run_grplasso_reg(
-  X = X,
-  Y = Y,
-  groups = NULL,
-  split_type = "train_test",
-  visualize = TRUE
-)
 
-print("Default Grouping Results:")
-print(result_default)
+# # Print the results
+# print(result$test_mse)
+# print(result$coefficients)
+# # simulate data to test the function
+# # Run the function with different group options and compare results
+# group_options <- c("corr", "pca", NULL)
+# results <- list()
 
-result_corr <- run_grplasso_reg(
-  X = X,
-  Y = Y,
-  groups = "corr",  # Correlation-based grouping
-  split_type = "train_validate_test",
-  visualize = TRUE
-)
-
-print("Correlation-Based Grouping Results:")
-print(result_corr)
-
-result_pca <- run_grplasso_reg(
-  X = X,
-  Y = Y,
-  groups = "pca",  # PCA-based grouping
-  split_type = "train_validate_test",
-  visualize = TRUE
-)
-
-print("PCA-Based Grouping Results:")
-print(result_pca)
+# for (group_option in group_options) {
+#     result <- run_grplasso_reg(X, Y, groups = group_option, split_type = "train_validate_test", visualize = TRUE)
+#     results[[as.character(group_option)]] <- result
+#     cat("Group option:", group_option, "\n")
+#     cat("Test MSE:", result$test_mse, "\n")
+#     cat("Best Lambda:", result$best_lambda, "\n\n")
+# }

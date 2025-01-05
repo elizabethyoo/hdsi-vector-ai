@@ -102,7 +102,10 @@ run_lasso_regression <- function(X, y, split_type = c("train_validate_test", "tr
         
         # Coefficients at the best lambda
         lasso_coefficients <- coef(cv_fit, s = best_lambda)
-        
+        # Dataframe with coefficients in descending order of magnitude, their corresponding group, and index in the original data matrix
+        lasso_coefficients <- data.frame(coef = as.numeric(lasso_coefficients), index = 1:ncol(X)) %>%
+            arrange(desc(abs(coef)))
+            
         # Save relevant information to result
         result$model <- cv_fit
         result$best_lambda <- best_lambda
