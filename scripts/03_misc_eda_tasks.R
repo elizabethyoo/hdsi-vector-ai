@@ -117,34 +117,103 @@ corrs_top20_gt <- corrs_df %>%
 # save corrs_df as csv
 # write.csv(corrs_df, file = here::here("results", "pep_sgned_corrs_df.csv"))
 
+# TODO two-sample test of means for COVID-19 positive and negative samples
 
 #==============================================================================
-# two-sample test of means for COVID-19 positive and negative samples
+# histogramming z-scores, stratified by COVID-19 status (in order to determine which two-sample test to use)
 #==============================================================================
-# 1) Create a data frame with X_vir_z_mx and y_vir_z
+
 META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "IP_reagent", 
-                   "COVID19_status", "Hospitalized", "Pull_down_antibody", 
-                   "patient", "original_id_column")
-X_y_vir_z <- cbind(as.data.frame(X_vir_z), y_vir_z)
-X_vir_z <-vir_z_pat %>%
-    select(-all_of(PAT_META_COLS)) 
+                   "Hospitalized", "Pull_down_antibody", 
+                   "patient", "original_id_column") # excludes COVID19_status which will be a part of the final dataframe
+# X_y_vir_z includes z-scores and COVID19_status vs. X_vir_z includes z-scores only
+X_y_vir_z <-vir_z_pat %>%
+    select(-all_of(META_COL_NO_STATUS)) %>%
+    mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive")))
+
+#1. Plot histograms for a random subset of peptides
+# Suppose your full data frame is called df
+# df has 844 rows (patients), 1 column "status", and 115,753 peptide columns.
+
+# TODO for approaches #1, 2, 4: replace df with X_y_vir_z
+
+# Randomly pick, say, 5 peptide columns (excluding the 'status' column)
+set.seed(123)
+peptide_cols <- sample(names(df)[-1], 5)  
+
+# Now for each selected peptide, plot histograms by disease status
+for (col_name in peptide_cols) {
+  diseased_z <- df[df$status == 1, col_name]
+  non_diseased_z <- df[df$status == 0, col_name]
+  
+  # Plot side-by-side histograms in base R
+  par(mfrow = c(1, 2))  # 1 row, 2 columns in the plotting window
+  
+  hist(diseased_z,
+       main = paste("Diseased -", col_name),
+       xlab = "z-score",
+       col = "skyblue",
+       breaks = 30)
+  hist(non_diseased_z,
+       main = paste("Non-Diseased -", col_name),
+       xlab = "z-score",
+       col = "lightgreen",
+       breaks = 30)
+  
+  # Reset plot layout
+  par(mfrow = c(1, 1))
+}
+
+#2. Plot histograms by flattening all peptides into one "lump" -- lose info on individual peptides but ah well
+library(tidyr)
+library(ggplot2)
+
+# Reshape from wide -> long, excluding 'status'
+# This could be large in memory if your dataset is truly massive, 
+# because it will create ~ (844 * 115,753) rows!
+df_long <- df %>%
+  pivot_longer(
+    cols = -status,
+    names_to = "peptide",
+    values_to = "z_score"
+  )
+
+# Then simply partition by status and plot a histogram
+ggplot(df_long, aes(x = z_score, fill = factor(status))) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 50) +
+  scale_fill_manual(values = c("lightgreen", "skyblue"),
+                    labels = c("Non-Diseased", "Diseased")) +
+  labs(x = "z-score", 
+       y = "Count", 
+       fill = "Status",
+       title = "Distribution of All Z-scores by Disease Status")
+
+#3. Plot histograms for the top 20 peptides by correlation with COVID-19 status
+# TODO 
+
+#4. Plot summary statistics instead of full histograms 
 
 
-y_vir_z <- vir_z_pat %>%
-    mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
-    pull(COVID19_status)
+library(dplyr)
 
-# checking for sparsity
+# Summarize mean z-score per (status, peptide)
+summaries <- df %>%
+  group_by(status) %>%
+  summarize(across(-status, 
+                   list(mean = ~mean(.x, na.rm = TRUE)), 
+                   .names = "{.col}_{.fn}"))
+
+
+
+
+
+
+
+#==============================================================================
+# miscellanea 
+#==============================================================================
+# checking for sparsity -- this crashes if you run on the head node
 # num_zero  <- sum(X_vir_z_mx == 0)
 # total_elems <- length(X_vir_z_mx)
 # sparsity_ratio <- num_zero / total_elems
-
 # sparsity_ratio
-
-# Number of nonzero entries:
-X_sp <- as(X_vir_z_mx, "dgCMatrix")
-nnz <- Matrix::nnzero(X_sp)  
-cat("Number of nonzero elements:", nnz, "\n")
-cat("Fraction of nonzero elements:", nnz / length(X_vir_z_mx), "\n")
-
-#==============================================================================
