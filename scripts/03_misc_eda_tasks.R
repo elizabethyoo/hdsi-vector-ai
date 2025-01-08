@@ -1,6 +1,4 @@
 # hodge podge of EDA tasks
-# 2024-12-18-wed: 
-# - examine percentage of zeros in each feature or sample
 
 # load packages
 library(tibble)
@@ -20,6 +18,7 @@ library(gridExtra)  # For arranging multiple plots/tables
 library(ggrepel)    # For enhanced plot labeling
 library(openxlsx)
 library(grid)
+library(pbapply)    # For parallel processing with progress bar
 
 # anchor project root directory 
 here::i_am("scripts/03_misc_eda_tasks.R")
@@ -317,6 +316,12 @@ get_organism_by_id <- function(id_chr, vir_lib) {
 # TODO two-sample test of means for COVID-19 positive and negative samples
 #==============================================================================
 
+# # rows of virlib dataframe where any of the columns contain NA
+# vir_lib_na_rows <- vir_lib %>% 
+#   filter(if_any(Sequence, is.na))
+# vir_lib_na_rows_lab <- vir_lib %>% 
+#   filter(if_any(c(Organism, `Protein names`, Species), is.na)) # note: some of these labels may be missing but sequence data is available for all entries of virlib -- not too big of a deal if a label is missing
+
 ### data prep
 META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "IP_reagent", 
                    "Hospitalized", "Pull_down_antibody", 
@@ -331,6 +336,7 @@ X_y_vir_z <- vir_z_pat %>%
     select(COVID19_status, everything()) %>% #factorize covid status
     mutate(COVID19_status = as.factor(COVID19_status))
 X_y_vir_z_dt <- as.data.table(X_y_vir_z)
+# drop any rows 
 
 X_vir_z <- X_y_vir_z %>%
     select(-COVID19_status)
@@ -343,37 +349,37 @@ cat("Peptide Data Dimensions:", dim(X_vir_z_dt), "\n")
 #### TO ERASE 
 #### FOR TESTING A SMALL SUBSET ON THE CLUSTER
 # Define an output directory for test plots and tables
-output_dir_test <- here("results", "eda", "viz", "test")
-if(!dir.exists(output_dir_test)) {
-  dir.create(output_dir_test)
+output_dir <- here("results", "eda", "viz")
+if(!dir.exists(output_dir)) {
+  dir.create(output_dir)
 }
 
 # Define the PDF and Excel file paths for test
-pdf_file_test <- here(output_dir_test, "All_Plots_and_Tables_Test.pdf") 
-excel_file_test <- here(output_dir_test, "Intermediate_Results_Test.xlsx") 
+pdf_file <- here(output_dir, "All_Plots_and_Tables.pdf") 
+excel_file <- here(output_dir, "Intermediate_Results.xlsx") 
 
 # Set seed for reproducibility
 set.seed(123)
 
 # Define number of peptides for testing
-num_test_peptides <- 10
+num_test_peptides <- 20
 
 # Randomly select peptides
 test_peptide_columns <- sample(colnames(X_vir_z_dt), num_test_peptides)
 
 # Create the subset dataframe
-X_y_vir_z_subset <- X_y_vir_z_dt %>% select(all_of(c("COVID19_status", test_peptide_columns)))
+X_y_vir_z <- X_y_vir_z_dt # %>% select(all_of(c("COVID19_status", test_peptide_columns))) # uncomment for testing on small subset
 
 
 # Extract peptide data by excluding disease status column
-peptide_data_subset <- X_y_vir_z_subset %>%
+peptide_data_subset <- X_y_vir_z %>%
   select(-COVID19_status)
-disease_status_subset <- X_y_vir_z_subset$COVID19_status
+disease_status_subset <- X_y_vir_z$COVID19_status
 # Confirm dimensions
 cat("Peptide Data Subset Dimensions:", dim(peptide_data_subset), "\n")
 
 # Define the number of top peptides to visualize (adjust as needed)
-top_n <- 5  # Reduced for the subset
+top_n <- 20  # Reduced for the subset
 
 # Remove peptides with zero variance or any NA values to ensure valid t-tests
 peptide_data_subset <- peptide_data_subset %>%
@@ -398,7 +404,7 @@ t_test_function <- function(peptide_values) {
 }
 
 # Perform t-tests using apply (serially)
-t_tests_subset <- apply(peptide_data_subset, 2, t_test_function)
+t_tests_subset <- pbapply(peptide_data_subset, 2, t_test_function)
 
 # Combine results into a dataframe
 results_unequal_subset <- bind_rows(t_tests_subset, .id = "peptide") %>%  
@@ -425,11 +431,16 @@ results_unequal_subset <- results_unequal_subset %>%
 
 # **Add significance information for Volcano Plot BEFORE selecting top peptides**
 results_unequal_subset <- results_unequal_subset %>%
-  mutate(significant = ifelse(p.adjust < 0.05, "Yes", "No"))
+  mutate(significant = ifelse(p.adjust < 0.05, "Yes", "No")) %>%
+  mutate(color_group = case_when(
+    significant == "Yes" & estimate1 > estimate2 ~ "control",    # Upregulated in disease_status = 0
+    significant == "Yes" & estimate1 < estimate2 ~ "covid+",  # Upregulated in disease_status = 1
+    TRUE ~ "not significant"                                           # Not significant
+  ))
 
 # Select top peptides by p-value
 top_peptides_p_subset <- results_unequal_subset %>%
-  filter(!is.na(p.adjust)) %>%  # Exclude NAs
+  filter(!is.na(p.adjust) & significant == "Yes") %>%  # Exclude NAs and filter for significant peptides
   arrange(p.adjust) %>%
   slice(1:top_n)
 
@@ -440,25 +451,30 @@ top_peptides_labels_subset <- top_peptides_p_subset %>%
   slice(1:num_labels)
 
 # Prepare to generate and save plots into a single PDF
-pdf(file = pdf_file_test, width = 11, height = 8.5)  # Landscape
+pdf(file = pdf_file, width = 11, height = 8.5)  # Landscape
 
 # 1. Volcano Plot with Labels
-volcano_plot_subset <- ggplot(results_unequal_subset, aes(x = statistic, y = -log10(p.adjust), color = significant)) +
+volcano_plot_subset <- ggplot(results_unequal_subset, aes(x = statistic, y = -log10(p.adjust), color = color_group)) +
   geom_point(alpha = 0.8) +
-  scale_color_manual(values = c("No" = "grey", "Yes" = "red")) +
-  labs(title = "Volcano Plot (Unequal Variances) - Test Subset",
+  scale_color_manual(values = c("control" = "blue", "covid+" = "orange", "not significant" = "grey")) +
+  labs(title = "Volcano Plot (Unequal Variances) - All Peptides",
        x = "t-statistic",
        y = "-log10(Adjusted p-value)",
        color = "Significant") +
-  theme_minimal()
-
-# Add labels for top peptides with Organism information
-volcano_plot_subset <- volcano_plot_subset +
+  theme_minimal() +
+  theme(
+    plot.margin = unit(c(1, 1, 1, 1), "cm")  # Top, right, bottom, left
+  ) +
   geom_text_repel(
-    data = top_peptides_labels_subset,
-    aes(label = peptide), # paste(peptide, str_wrap(organism, width = 50), sep = ": ") if you want organisms
-    size = 3
+    data = top_peptides_p_subset,
+    aes(label = peptide),
+    size = 1.5,
+    max.overlaps = Inf,  # Allows unlimited label overlaps, adjust as needed
+    force = 2,           # Increases the repelling force
+    nudge_y = 0.5,       # Nudges labels upward
+    segment.color = "grey50" # Color of the connecting line
   )
+
 
 # Print Volcano Plot to PDF
 print(volcano_plot_subset)
@@ -466,7 +482,7 @@ print(volcano_plot_subset)
 
 
 # 2. Ranking Plot
-ranking_plot_subset <- ggplot(top_peptides_p_subset, aes(x = reorder(peptide, p.adjust), y = -log10(p.adjust))) +
+ranking_plot_subset <- ggplot(top_peptides_p_subset, aes(x = reorder(paste("id:", peptide, ",", organism = str_wrap(organism, width = 30)), p.adjust), y = -log10(p.adjust))) +
   geom_bar(stat = "identity", fill = "steelblue") +
   coord_flip() +
   labs(title = paste("Top", top_n, "Peptides by Adjusted p-value - Test Subset"),
@@ -491,7 +507,7 @@ print(ranking_plot_subset)
 
 # # Create annotation for disease status
 # annotation_col_subset <- data.frame(DiseaseStatus = disease_status_subset)
-# rownames(annotation_col_subset) <- rownames(X_y_vir_z_subset)  # Ensure rownames match
+# rownames(annotation_col_subset) <- rownames(X_y_vir_z)  # Ensure rownames match
 
 # # Plot and print the heatmap to PDF
 # pheatmap(
@@ -507,255 +523,85 @@ print(ranking_plot_subset)
 # 4. Table of Top Peptides
 top_peptides_table_subset <- top_peptides_p_subset %>%
   select(peptide, organism, p.value, p.adjust, statistic, estimate1, estimate2) %>%
+  rename(
+    id = peptide, 
+    t.statistic = statistic, 
+    mean.z.control = estimate1, 
+    mean.z.covidpos = estimate2 
+  ) %>% # For better human readability  
   arrange(p.adjust) %>%
-  mutate(organism = str_wrap(organism, width = 30))
+  mutate(organism = str_wrap(organism, width = 30)) %>%
+  mutate(row.num = row_number()) # Add row numbers
 
-# Convert to a table grob
-table_grob_subset <- tableGrob(top_peptides_table_subset, rows = NULL)
+# Define number of rows per page
+rows_per_page <- 15  # Adjust based on your needs
 
-# Add a title to the table
-table_with_title_subset <- arrangeGrob(
-  grobs = list(
-    textGrob("Top Peptides by Adjusted p-value - Test Subset", gp = gpar(fontsize = 16, fontface = "bold")),
-    table_grob_subset
-  ),
-  ncol = 1,
-  heights = unit.c(unit(1, "cm"), unit(1, "npc") - unit(1, "cm"))
+# Split the table into chunks
+table_chunks <- split(
+  top_peptides_table_subset, 
+  ceiling(seq_len(nrow(top_peptides_table_subset)) / rows_per_page)
 )
 
-# **Use grid.arrange() to arrange and draw the table on a new page**
-grid.newpage()  # Start a new page to prevent overlapping with previous plots
-grid.arrange(table_with_title_subset)
+# Create list of grobs with titles
+grob_list <- lapply(table_chunks, function(chunk) {
+  
+  # Convert chunk to table grob
+  table_grob <- tableGrob(chunk, rows = NULL, theme = ttheme_minimal(base_size = 8))
+  
+  # Create title grob
+  title <- textGrob(
+    "Top Peptides by Adjusted p-value - Test Subset", 
+    gp = gpar(fontsize = 16, fontface = "bold")
+  )
+  
+  # Arrange title and table vertically
+  arrangeGrob(
+    grobs = list(title, table_grob),
+    ncol = 1,
+    heights = unit.c(unit(1, "cm"), unit(10, "cm")) # Adjust height as needed
+  )
+})
+
+# Arrange grobs across multiple pages
+pages <- marrangeGrob(
+  grob_list, 
+  nrow = 1, 
+  ncol = 1
+)
+
+print(pages)
 
 # Close the PDF device to save the file
 dev.off()
 
 # 5. Save Intermediate Results into an Excel File for Test
-wb_test <- createWorkbook()
+wb <- createWorkbook()
 
 # Add worksheets for each table
-addWorksheet(wb_test, "Top_Peptides_by_pvalue_Test")
-addWorksheet(wb_test, "T_Test_Results_Unequal_Variances_Test")
-addWorksheet(wb_test, "Ranked_by_Adjusted_pvalue_Test")
-addWorksheet(wb_test, "Ranked_by_Absolute_t_Test")
+addWorksheet(wb, "Top_Peptides_by_Pval")
+addWorksheet(wb, "T_Test_Unequal_Var")
+addWorksheet(wb, "Ranked_by_AdjPval")
+addWorksheet(wb, "Ranked_by_Abs_t")
 
 # Write data to each sheet
-writeData(wb_test, sheet = "Top_Peptides_by_pvalue_Test", top_peptides_p_subset)
-writeData(wb_test, sheet = "T_Test_Results_Unequal_Variances_Test", results_unequal_subset)
-writeData(wb_test, sheet = "Ranked_by_Adjusted_pvalue_Test", results_unequal_subset %>% arrange(p.adjust))
-writeData(wb_test, sheet = "Ranked_by_Absolute_t_Test", results_unequal_subset %>% arrange(desc(abs_t)))
+writeData(wb, sheet = "Top_Peptides_by_Pval", top_peptides_p_subset)
+writeData(wb, sheet = "T_Test_Unequal_Var", results_unequal_subset)
+writeData(wb, sheet = "Ranked_by_AdjPval", results_unequal_subset %>% arrange(p.adjust))
+writeData(wb, sheet = "Ranked_by_Abs_t", results_unequal_subset %>% arrange(desc(abs_t)))
 
 # Optionally, add formatting (e.g., bold headers)
-addStyle(wb_test, sheet = "Top_Peptides_by_pvalue_Test", 
+addStyle(wb, sheet = "Top_Peptides_by_Pval", 
          style = createStyle(textDecoration = "bold"), 
          rows = 1, cols = 1:ncol(top_peptides_p_subset), gridExpand = TRUE)
-addStyle(wb_test, sheet = "T_Test_Results_Unequal_Variances_Test", 
+addStyle(wb, sheet = "T_Test_Unequal_Var", 
          style = createStyle(textDecoration = "bold"), 
          rows = 1, cols = 1:ncol(results_unequal_subset), gridExpand = TRUE)
-addStyle(wb_test, sheet = "Ranked_by_Adjusted_pvalue_Test", 
+addStyle(wb, sheet = "Ranked_by_AdjPval", 
          style = createStyle(textDecoration = "bold"), 
          rows = 1, cols = 1:ncol(results_unequal_subset), gridExpand = TRUE)
-addStyle(wb_test, sheet = "Ranked_by_Absolute_t_Test", 
+addStyle(wb, sheet = "Ranked_by_Abs_t", 
          style = createStyle(textDecoration = "bold"), 
          rows = 1, cols = 1:ncol(results_unequal_subset), gridExpand = TRUE)
 
 # Save the workbook
-saveWorkbook(wb_test, file = excel_file_test, overwrite = TRUE)
-
-
-###### TODO UNCOMMENT LATER
-# Set seed for reproducibility
-# set.seed(123)
-
-# # Define number of peptides for testing
-# num_test_peptides <- 10
-
-# # Randomly select peptides
-# test_peptide_columns <- sample(colnames(X_vir_z), num_test_peptides)
-
-# # Create the subset dataframe
-# X_y_vir_z_subset <- X_y_vir_z %>% select(all_of(c("COVID19_status", test_peptide_columns)))
-
-# # Verify the subset
-# print(dim(X_y_vir_z_subset))  # Should be 844 rows x 11 columns (1 disease_status + 10 peptides)
-# print(table(X_y_vir_z_subset$COVID19_status))  # Should reflect the original group distribution
-
-
-
-
-# # Define the number of top peptides to visualize
-# top_n <- 5 # ADJUST AFTER TESTING
-
-# # Remove peptides with zero variance or any NA values to ensure valid t-tests
-# X_vir_z_dt <- X_vir_z_dt %>%
-#   select(where(~ var(.) > 0, na.rm = TRUE)) %>%
-#   select(where(~ !any(is.na(.))))
-
-# # Parallel Processing Setup
-# num_cores <- detectCores() - 1
-# cl <- makeCluster(num_cores)
-# clusterExport(cl, varlist = c("X_vir_z_dt", "disease_status"))
-# clusterEvalQ(cl, {
-#   library(broom)
-# })
-
-# # Define t-test function with error handling
-# t_test_function <- function(peptide_values) {
-#   test_result <- try(t.test(peptide_values ~ disease_status, var.equal = FALSE), silent = TRUE)
-  
-#   if(class(test_result) == "try-error") {
-#     return(tibble(statistic = NA, p.value = NA, parameter = NA, conf.low = NA, conf.high = NA, estimate1 = NA, estimate2 = NA))
-#   } else {
-#     return(tibble(statistic = test_result$statistic,
-#                   p.value = test_result$p.value,
-#                   parameter = test_result$parameter,
-#                   conf.low = test_result$conf.int[1],
-#                   conf.high = test_result$conf.int[2],
-#                   estimate1 = test_result$estimate[1],
-#                   estimate2 = test_result$estimate[2]))
-#   }
-# }
-
-# # Perform parallel t-tests
-# cat("Starting parallel t-tests...\n")
-# t_tests_parallel <- parLapply(cl, as.data.frame(X_vir_z_dt), t_test_function)
-# cat("t-tests completed.\n")
-
-# # Stop the cluster
-# stopCluster(cl)
-
-# # Combine results into a dataframe
-# results_unequal <- bind_rows(t_tests_parallel, .id = "peptide")
-
-# # Adjust p-values for multiple testing using p.adjust (no package needed)
-# results_unequal <- results_unequal %>%
-#   mutate(p.adjust = p.adjust(p.value, method = "BH"))
-
-# # Rank peptides by adjusted p-value
-# results_unequal <- results_unequal %>%
-#   arrange(p.adjust) %>%
-#   mutate(rank_p = row_number())
-
-# # Rank peptides by absolute t-statistic
-# results_unequal <- results_unequal %>%
-#   mutate(abs_t = abs(statistic)) %>%
-#   arrange(desc(abs_t)) %>%
-#   mutate(rank_t = row_number())
-
-# # Select top peptides by p-value
-# top_peptides_p <- results_unequal %>%
-#   filter(!is.na(p.adjust)) %>%  # Exclude NAs
-#   arrange(p.adjust) %>%
-#   slice(1:top_n)
-
-# # Add significance information for Volcano Plot
-# results_unequal <- results_unequal %>%
-#   mutate(significant = ifelse(p.adjust < 0.05, "Yes", "No"))
-
-# # Define top peptides for labeling
-# # Ensure there are no duplicates and enough top peptides
-# num_labels <- min(10, nrow(top_peptides_p))  # Adjust as needed
-# top_peptides_labels <- top_peptides_p %>%
-#   arrange(p.adjust) %>%
-#   slice(1:num_labels)
-
-# pdf_file <- here("results", "eda", "viz", "All_Plots_and_Tables_TwoSampleTest.pdf")
-# excel_file <- here("results", "eda", "viz", "Intermediate_Results_TwoSampleTest.xlsx")
-
-# # Prepare to generate and save plots into a single PDF
-# pdf(file = pdf_file, width = 11, height = 8.5)  # Landscape
-
-# # 1. Volcano Plot with Labels
-# volcano_plot <- ggplot(results_unequal, aes(x = statistic, y = -log10(p.adjust), color = significant)) +
-#   geom_point(alpha = 0.5) +
-#   scale_color_manual(values = c("grey", "red")) +
-#   labs(title = "Volcano Plot (Unequal Variances)",
-#        x = "t-statistic",
-#        y = "-log10(Adjusted p-value)",
-#        color = "Significant") +
-#   theme_minimal()
-
-# # Add labels for top peptides
-# volcano_plot <- volcano_plot +
-#   geom_text_repel(data = top_peptides_labels, aes(label = peptide),
-#                   size = 3, box.padding = 0.3, point.padding = 0.3, max.overlaps = Inf)
-
-# # Print Volcano Plot to PDF
-# print(volcano_plot)
-
-# # 2. Ranking Plot
-# ranking_plot <- ggplot(top_peptides_p, aes(x = reorder(peptide, p.adjust), y = -log10(p.adjust))) +
-#   geom_bar(stat = "identity", fill = "steelblue") +
-#   coord_flip() +
-#   labs(title = paste("Top", top_n, "Peptides by Adjusted p-value"),
-#        x = "Peptide",
-#        y = "-log10(Adjusted p-value)") +
-#   theme_minimal()
-
-# # Print Ranking Plot to PDF
-# print(ranking_plot)
-
-# # 3. Heatmap
-# heatmap_data <- X_vir_z_dt[, top_peptides_p$peptide, drop = FALSE]
-# heatmap_scaled <- t(scale(t(as.matrix(heatmap_data)), center = TRUE, scale = TRUE))
-
-# # Create annotation for disease status
-# annotation_col <- data.frame(DiseaseStatus = disease_status)
-# rownames(annotation_col) <- rownames(X_y_vir_z)  # Ensure rownames match
-
-# # Plot and print the heatmap to PDF
-# pheatmap(heatmap_scaled,
-#          annotation_col = annotation_col,
-#          show_rownames = FALSE,
-#          show_colnames = FALSE,
-#          cluster_rows = TRUE,
-#          cluster_cols = TRUE,
-#          main = paste("Heatmap of Top", top_n, "Peptides by p-value"))
-
-# # 4. Table of Top Peptides
-# top_peptides_table <- top_peptides_p %>%
-#   select(peptide, p.value, p.adjust, statistic, estimate1, estimate2) %>%
-#   arrange(p.adjust)
-
-# # Convert to a table grob
-# table_grob <- tableGrob(top_peptides_table, rows = NULL)
-
-# # Add a title to the table
-# table_with_title <- arrangeGrob(
-#   grobs = list(textGrob("Top Peptides by Adjusted p-value", gp = gpar(fontsize = 16, fontface = "bold")),
-#                table_grob),
-#   ncol = 1,
-#   heights = unit.c(unit(1, "cm"), unit(1, "npc") - unit(1, "cm"))
-# )
-
-# # Print the table to PDF
-# print(table_with_title)
-
-# # Close the PDF device to save the file
-# dev.off()
-
-# # 5. Save Intermediate Results into an Excel File
-
-# # Create a new Excel workbook
-# wb <- createWorkbook()
-
-# # Add worksheets for each table
-# addWorksheet(wb, "Top_Peptides_by_pvalue")
-# addWorksheet(wb, "T_Test_Results_Unequal_Variances")
-# addWorksheet(wb, "Ranked_by_Adjusted_pvalue")
-# addWorksheet(wb, "Ranked_by_Absolute_t")
-
-# # Write data to each sheet
-# writeData(wb, sheet = "Top_Peptides_by_pvalue", top_peptides_p)
-# writeData(wb, sheet = "T_Test_Results_Unequal_Variances", results_unequal)
-# writeData(wb, sheet = "Ranked_by_Adjusted_pvalue", results_unequal %>% arrange(p.adjust))
-# writeData(wb, sheet = "Ranked_by_Absolute_t", results_unequal %>% arrange(desc(abs_t)))
-
-# # Optionally, add formatting (e.g., bold headers)
-# addStyle(wb, sheet = "Top_Peptides_by_pvalue", style = createStyle(textDecoration = "bold"), rows = 1, cols = 1:ncol(top_peptides_p), gridExpand = TRUE)
-# addStyle(wb, sheet = "T_Test_Results_Unequal_Variances", style = createStyle(textDecoration = "bold"), rows = 1, cols = 1:ncol(results_unequal), gridExpand = TRUE)
-# addStyle(wb, sheet = "Ranked_by_Adjusted_pvalue", style = createStyle(textDecoration = "bold"), rows = 1, cols = 1:ncol(results_unequal), gridExpand = TRUE)
-# addStyle(wb, sheet = "Ranked_by_Absolute_t", style = createStyle(textDecoration = "bold"), rows = 1, cols = 1:ncol(results_unequal), gridExpand = TRUE)
-
-# # Save the workbook
-# saveWorkbook(wb, file = excel_file, overwrite = TRUE)
+saveWorkbook(wb, file = excel_file, overwrite = TRUE)
