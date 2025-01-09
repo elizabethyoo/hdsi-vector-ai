@@ -156,12 +156,31 @@ vir_z <- readRDS(here::here("data", "rds", "vir_z.rds"))
 
 # # TODO: put in a helper functions script 
 # # Function to get organism by col_name
+# TODO: if organism is missing, get protein name, and then species, and then sequence
 get_organism_by_id <- function(id_chr, vir_lib) {
   id_numeric <- as.numeric(id_chr)
-  organism <- vir_lib %>%
+  label <- vir_lib %>%
     filter(id == id_numeric) %>%
     pull(Organism)
-  return(paste(organism, collapse = ", "))
+
+  if (is.na(label)) {
+    protein_name <- vir_lib %>%
+      filter(id == id_numeric) %>%
+      pull(`Protein names`)
+    label <- paste("protein:", protein_name)
+  } else if (is.na(label)) {
+    species <- vir_lib %>%
+      filter(id == id_numeric) %>%
+      pull(Species)
+    label <- paste("species:", species)
+  } else if (is.na(label)) {
+    sequence <- vir_lib %>%
+      filter(id == id_numeric) %>%
+      pull(Sequence)
+    label <- paste("sequence:", sequence)
+  }
+
+  return(paste(label, collapse = ", "))
 }
 
 # PDF_NAME <- "sampled_zscores_histograms_perpeptide_stratified.pdf"
@@ -355,8 +374,8 @@ if(!dir.exists(output_dir)) {
 }
 
 # Define the PDF and Excel file paths for test
-pdf_file <- here(output_dir, "All_Plots_and_Tables.pdf") 
-excel_file <- here(output_dir, "Intermediate_Results.xlsx") 
+pdf_file <- here(output_dir, "Welchs_Test_AllPeptides_Results.pdf") 
+excel_file <- here(output_dir, "Welchs_Test_AllPeptides_Intermediate_Results.xlsx") 
 
 # Set seed for reproducibility
 set.seed(123)
@@ -368,7 +387,7 @@ num_test_peptides <- 20
 test_peptide_columns <- sample(colnames(X_vir_z_dt), num_test_peptides)
 
 # Create the subset dataframe
-X_y_vir_z <- X_y_vir_z_dt # %>% select(all_of(c("COVID19_status", test_peptide_columns))) # uncomment for testing on small subset
+X_y_vir_z <- X_y_vir_z_dt %>% select(all_of(c("COVID19_status", test_peptide_columns))) # uncomment for testing on small subset
 
 
 # Extract peptide data by excluding disease status column
@@ -468,7 +487,7 @@ volcano_plot_subset <- ggplot(results_unequal_subset, aes(x = statistic, y = -lo
   geom_text_repel(
     data = top_peptides_p_subset,
     aes(label = peptide),
-    size = 1.5,
+    size = 3,
     max.overlaps = Inf,  # Allows unlimited label overlaps, adjust as needed
     force = 2,           # Increases the repelling force
     nudge_y = 0.5,       # Nudges labels upward
@@ -531,7 +550,10 @@ top_peptides_table_subset <- top_peptides_p_subset %>%
   ) %>% # For better human readability  
   arrange(p.adjust) %>%
   mutate(organism = str_wrap(organism, width = 30)) %>%
-  mutate(row.num = row_number()) # Add row numbers
+  # Add row numbers for better readability
+  mutate(row.num = row_number()) %>%
+  select(row.num, everything())
+  
 
 # Define number of rows per page
 rows_per_page <- 15  # Adjust based on your needs
@@ -542,11 +564,12 @@ table_chunks <- split(
   ceiling(seq_len(nrow(top_peptides_table_subset)) / rows_per_page)
 )
 
-# Create list of grobs with titles
+# Create list of grobs with titles and proper spacing
 grob_list <- lapply(table_chunks, function(chunk) {
   
-  # Convert chunk to table grob
-  table_grob <- tableGrob(chunk, rows = NULL, theme = ttheme_minimal(base_size = 8))
+  # Create tableGrob with padding
+  table_grob <- tableGrob(chunk, rows = NULL, theme = ttheme_minimal(base_size = 8)) %>%
+    gtable::gtable_add_padding(padding = unit(c(0.5, 0.5, 0.5, 0.5), "cm"))
   
   # Create title grob
   title <- textGrob(
@@ -554,11 +577,11 @@ grob_list <- lapply(table_chunks, function(chunk) {
     gp = gpar(fontsize = 16, fontface = "bold")
   )
   
-  # Arrange title and table vertically
+  # Arrange title and table vertically with relative heights
   arrangeGrob(
     grobs = list(title, table_grob),
     ncol = 1,
-    heights = unit.c(unit(1, "cm"), unit(10, "cm")) # Adjust height as needed
+    heights = unit(c(1, 10), "null")  # Relative allocation to prevent overlap
   )
 })
 
@@ -569,6 +592,7 @@ pages <- marrangeGrob(
   ncol = 1
 )
 
+# Print the tables to PDF
 print(pages)
 
 # Close the PDF device to save the file
