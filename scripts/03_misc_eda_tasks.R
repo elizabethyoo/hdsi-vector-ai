@@ -19,6 +19,8 @@ library(ggrepel)    # For enhanced plot labeling
 library(openxlsx)
 library(grid)
 library(pbapply)    # For parallel processing with progress bar
+library(RColorBrewer)
+library(patchwork)
 
 # anchor project root directory 
 here::i_am("scripts/03_misc_eda_tasks.R")
@@ -159,29 +161,46 @@ vir_z <- readRDS(here::here("data", "rds", "vir_z.rds"))
 # TODO: if organism is missing, get protein name, and then species, and then sequence
 get_organism_by_id <- function(id_chr, vir_lib) {
   id_numeric <- as.numeric(id_chr)
-  label <- vir_lib %>%
-    filter(id == id_numeric) %>%
-    pull(Organism)
-
-  if (is.na(label)) {
-    protein_name <- vir_lib %>%
-      filter(id == id_numeric) %>%
-      pull(`Protein names`)
-    label <- paste("protein:", protein_name)
-  } else if (is.na(label)) {
-    species <- vir_lib %>%
-      filter(id == id_numeric) %>%
-      pull(Species)
-    label <- paste("species:", species)
-  } else if (is.na(label)) {
-    sequence <- vir_lib %>%
-      filter(id == id_numeric) %>%
-      pull(Sequence)
-    label <- paste("sequence:", sequence)
+  
+  # Filter the row corresponding to the given id
+  row_data <- vir_lib %>% 
+    filter(id == id_numeric)
+  
+  # Check if row_data is empty
+  if (nrow(row_data) == 0) {
+    return(NA)  # Return NA if no matching id is found
   }
-
-  return(paste(label, collapse = ", "))
+  
+  # Try to get the organism
+  label <- row_data %>%
+    pull(Organism) %>%
+    first()
+  
+  # Fallbacks if Organism is NA
+  if (is.na(label)) {
+    protein_name <- row_data %>%
+      pull(`Protein names`) %>%
+      first()
+    if (!is.na(protein_name)) {
+      label <- paste("protein:", protein_name)
+    } else {
+      species <- row_data %>%
+        pull(Species) %>%
+        first()
+      if (!is.na(species)) {
+        label <- paste("species:", species)
+      } else {
+        sequence <- row_data %>%
+          pull(Sequence) %>%
+          first()
+        label <- paste("sequence:", sequence)
+      }
+    }
+  }
+  
+  return(label)
 }
+
 
 # PDF_NAME <- "sampled_zscores_histograms_perpeptide_stratified.pdf"
 # pdf(here("results", "eda", "viz", PDF_NAME), width = 10, height = 6)  # opens a multi-page PDF
@@ -355,7 +374,7 @@ X_y_vir_z <- vir_z_pat %>%
     select(COVID19_status, everything()) %>% #factorize covid status
     mutate(COVID19_status = as.factor(COVID19_status))
 X_y_vir_z_dt <- as.data.table(X_y_vir_z)
-# drop any rows 
+
 
 X_vir_z <- X_y_vir_z %>%
     select(-COVID19_status)
@@ -365,13 +384,9 @@ X_vir_z_dt <- as.data.table(X_vir_z)
 # Confirm dimensions
 cat("Peptide Data Dimensions:", dim(X_vir_z_dt), "\n")
 
-#### TO ERASE 
-#### FOR TESTING A SMALL SUBSET ON THE CLUSTER
+
 # Define an output directory for test plots and tables
 output_dir <- here("results", "eda", "viz")
-if(!dir.exists(output_dir)) {
-  dir.create(output_dir)
-}
 
 # Define the PDF and Excel file paths for test
 pdf_file <- here(output_dir, "Welchs_Test_AllPeptides_Results.pdf") 
@@ -381,13 +396,13 @@ excel_file <- here(output_dir, "Welchs_Test_AllPeptides_Intermediate_Results.xls
 set.seed(123)
 
 # Define number of peptides for testing
-num_test_peptides <- 20
+num_test_peptides <- 1000
 
 # Randomly select peptides
 test_peptide_columns <- sample(colnames(X_vir_z_dt), num_test_peptides)
 
 # Create the subset dataframe
-X_y_vir_z <- X_y_vir_z_dt %>% select(all_of(c("COVID19_status", test_peptide_columns))) # uncomment for testing on small subset
+X_y_vir_z <- X_y_vir_z_dt  # %>% select(all_of(c("COVID19_status", test_peptide_columns))) # uncomment for testing on small subset
 
 
 # Extract peptide data by excluding disease status column
@@ -398,7 +413,7 @@ disease_status_subset <- X_y_vir_z$COVID19_status
 cat("Peptide Data Subset Dimensions:", dim(peptide_data_subset), "\n")
 
 # Define the number of top peptides to visualize (adjust as needed)
-top_n <- 20  # Reduced for the subset
+top_n <- 20 # Reduced for the subset
 
 # Remove peptides with zero variance or any NA values to ensure valid t-tests
 peptide_data_subset <- peptide_data_subset %>%
@@ -429,6 +444,8 @@ t_tests_subset <- pbapply(peptide_data_subset, 2, t_test_function)
 results_unequal_subset <- bind_rows(t_tests_subset, .id = "peptide") %>%  
 # add a column Organism using get_organism_by_id function 
   mutate(organism = map_chr(peptide, get_organism_by_id, vir_lib)) %>%
+  # if any of the organism values is NA, drop the rows
+  filter(!is.na(organism)) %>%
   # rank by p-value
   arrange(p.value) 
                           
@@ -448,20 +465,39 @@ results_unequal_subset <- results_unequal_subset %>%
   arrange(desc(abs_t)) %>%
   mutate(rank_t = row_number())
 
-# **Add significance information for Volcano Plot BEFORE selecting top peptides**
+# Add significance information before selecting top peptides
+# Add significance information and process `results_unequal_subset`
 results_unequal_subset <- results_unequal_subset %>%
   mutate(significant = ifelse(p.adjust < 0.05, "Yes", "No")) %>%
   mutate(color_group = case_when(
-    significant == "Yes" & estimate1 > estimate2 ~ "control",    # Upregulated in disease_status = 0
-    significant == "Yes" & estimate1 < estimate2 ~ "covid+",  # Upregulated in disease_status = 1
-    TRUE ~ "not significant"                                           # Not significant
-  ))
+    significant == "Yes" & estimate1 > estimate2 ~ "control",
+    significant == "Yes" & estimate1 < estimate2 ~ "covid+",
+    TRUE ~ "not significant"
+  )) %>%
+  mutate(
+    organism = stringr::str_wrap(organism, width = 30)
+  )
 
 # Select top peptides by p-value
 top_peptides_p_subset <- results_unequal_subset %>%
   filter(!is.na(p.adjust) & significant == "Yes") %>%  # Exclude NAs and filter for significant peptides
   arrange(p.adjust) %>%
-  slice(1:top_n)
+  slice(1:top_n) %>%
+  mutate(
+    organism = stringr::str_wrap(organism, width = 30),
+    organism = factor(organism, levels = unique(organism[order(p.adjust)]))
+  )
+
+# Define the organism color palette
+color_palette <- colorRampPalette(brewer.pal(12, "Set3"))(n_distinct(top_peptides_p_subset$organism))
+
+# Map organism levels to colors
+organism_colors <- setNames(color_palette, levels(top_peptides_p_subset$organism))
+
+# Print organism levels and color mapping
+print(levels(top_peptides_p_subset$organism))
+print(organism_colors)
+
 
 # Define top peptides for labeling (adjust number as needed)
 num_labels <- min(3, nrow(top_peptides_p_subset))  # Adjust as needed
@@ -472,44 +508,99 @@ top_peptides_labels_subset <- top_peptides_p_subset %>%
 # Prepare to generate and save plots into a single PDF
 pdf(file = pdf_file, width = 11, height = 8.5)  # Landscape
 
-# 1. Volcano Plot with Labels
-volcano_plot_subset <- ggplot(results_unequal_subset, aes(x = statistic, y = -log10(p.adjust), color = color_group)) +
-  geom_point(alpha = 0.8) +
-  scale_color_manual(values = c("control" = "blue", "covid+" = "orange", "not significant" = "grey")) +
-  labs(title = "Volcano Plot (Unequal Variances) - All Peptides",
-       x = "t-statistic",
-       y = "-log10(Adjusted p-value)",
-       color = "Significant") +
+# Print messages for debugging before plot
+# Check top peptides data
+print(top_peptides_p_subset)
+print(unique(top_peptides_p_subset$organism))
+# check all peptides data
+print(results_unequal_subset)
+print(unique(results_unequal_subset$color_group))
+# check color mapping
+print(organism_colors)
+
+
+# 1. Volcano Plot
+
+# Update volcano plot
+volcano_plot_subset <- ggplot(results_unequal_subset, 
+                              aes(x = statistic, 
+                                  y = -log10(p.adjust))) +
+  # Default points for all peptides (significance categories)
+  geom_point(aes(color = color_group), alpha = 0.8) +
+  
+  # Points for top 20 peptides with organism-specific colors
+  geom_point(data = top_peptides_p_subset, 
+             aes(color = organism), 
+             size = 3) +
+  
+  # Text labels for top 20 peptides with organism-specific colors
+  geom_text_repel(data = top_peptides_p_subset, 
+                  aes(label = peptide, color = organism), 
+                  size = 3, 
+                  max.overlaps = Inf, 
+                  force = 2, 
+                  nudge_y = 0.5, 
+                  segment.color = "grey50") +
+  
+  # Update color scales for both significance groups and organisms
+  scale_color_manual(
+    values = c("control" = "blue", "covid+" = "orange", "not significant" = "grey", organism_colors),
+    name = "Significance/Organism",
+    breaks = c("control", "covid+", "not significant", levels(top_peptides_p_subset$organism))
+  ) +
+  
+  # Labels and theme adjustments
+  labs(
+    title = "Volcano Plot (Unequal Variances) - All Peptides",
+    x = "t-statistic",
+    y = "-log10(Adjusted p-value)",
+    color = "Significance/Organism"
+  ) +
   theme_minimal() +
   theme(
-    plot.margin = unit(c(1, 1, 1, 1), "cm")  # Top, right, bottom, left
-  ) +
-  geom_text_repel(
-    data = top_peptides_p_subset,
-    aes(label = peptide),
-    size = 3,
-    max.overlaps = Inf,  # Allows unlimited label overlaps, adjust as needed
-    force = 2,           # Increases the repelling force
-    nudge_y = 0.5,       # Nudges labels upward
-    segment.color = "grey50" # Color of the connecting line
+    legend.position = "right",          # Position the legend on the right
+    legend.text = element_text(size = 8),  # Adjust legend text size
+    plot.margin = unit(c(1, 1, 1, 1), "cm"),  # Adjust plot margins
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Center and bold the title
   )
 
-
-# Print Volcano Plot to PDF
+# Save the volcano plot to the same PDF
 print(volcano_plot_subset)
 
 
 
-# 2. Ranking Plot
-ranking_plot_subset <- ggplot(top_peptides_p_subset, aes(x = reorder(paste("id:", peptide, ",", organism = str_wrap(organism, width = 30)), p.adjust), y = -log10(p.adjust))) +
-  geom_bar(stat = "identity", fill = "steelblue") +
-  coord_flip() +
-  labs(title = paste("Top", top_n, "Peptides by Adjusted p-value - Test Subset"),
-       x = "Peptide",
-       y = "-log10(Adjusted p-value)") +
-  theme_minimal()
 
-# Print Ranking Plot to PDF
+# 2. Ranking Plot
+# Generate a larger palette
+color_palette <- colorRampPalette(brewer.pal(12, "Set3"))(n_distinct(top_peptides_p_subset$organism))
+
+# Wrap long legend text and order the legend
+top_peptides_p_subset <- top_peptides_p_subset %>%
+  mutate(
+    organism = stringr::str_wrap(organism, width = 30),
+    organism = factor(organism, levels = unique(organism[order(p.adjust)]))
+  )
+
+# Create the ranking plot
+ranking_plot_subset <- ggplot(top_peptides_p_subset, 
+                         aes(x = reorder(peptide, -p.adjust), 
+                           y = -log10(p.adjust), 
+                           fill = organism)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = color_palette, name = "Organism") +
+  labs(title = "Top Peptides by Adjusted p-value - All Peptides",
+       x = NULL, 
+       y = "-log10(Adjusted p-value)") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",  # Legend on the right
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),  # Ensure centered and visible title
+    plot.margin = unit(c(1.5, 1, 1, 1), "cm")  # Adjust margins
+  )
+
+# Print the plot directly
 print(ranking_plot_subset)
 
 # # 3. Heatmap
@@ -536,7 +627,7 @@ print(ranking_plot_subset)
 #   show_colnames = FALSE,
 #   cluster_rows = TRUE,
 #   cluster_cols = TRUE,
-#   main = paste("Heatmap of Top", top_n, "Peptides by p-value - Test Subset")
+#   main = paste("Heatmap of Top", top_n, "Peptides by p-value - All Peptides")
 # )
 
 # 4. Table of Top Peptides
@@ -573,7 +664,7 @@ grob_list <- lapply(table_chunks, function(chunk) {
   
   # Create title grob
   title <- textGrob(
-    "Top Peptides by Adjusted p-value - Test Subset", 
+    "Top Peptides by Adjusted p-value - All Peptides", 
     gp = gpar(fontsize = 16, fontface = "bold")
   )
   
