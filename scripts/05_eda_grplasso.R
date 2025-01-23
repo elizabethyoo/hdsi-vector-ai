@@ -119,6 +119,7 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
         cat("Grouping length:", length(groups), "\n")
         cat("distribution of grouops: ", table(groups), "\n")  # Show distribution of groups
     }
+    index_final <- c(NA, groups) # account for intercept column 
 
     # Ensure directories exist
     if (visualize) {
@@ -191,7 +192,7 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
             sink(DEBUG_LOG, append = TRUE)
             cat("Running cross-validation for lambda =", lambda, "\n")
 
-            fit <- grplasso(X_train, Y_train, index = groups, lambda = lambda, model = LinReg())
+            fit <- grplasso(X_train, Y_train, index = index_final, lambda = lambda, model = LinReg())
             mse <- mean((Y_valid - predict(fit, X_valid))^2)
 
             cat("MSE for lambda =", lambda, ":", mse, "\n")
@@ -206,7 +207,7 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
     }
 
     # Final Model Fitting and Logging
-    final_model <- grplasso(X_train, Y_train, index = groups, lambda = best_lambda, model = LinReg())
+    final_model <- grplasso(X_train, Y_train, index = index_final, lambda = best_lambda, model = LinReg())
     Y_test_pred <- predict(final_model, X_test)
     test_mse <- mean((Y_test - Y_test_pred)^2)
 
@@ -221,7 +222,6 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
     coefs <- unlist(coefs)
     }
 
-
     cat("First few coefficients:\n")
     print(head(coefs))
 
@@ -230,10 +230,11 @@ run_grplasso_reg <- function(X, Y, groups = NULL, split_type = c("train_validate
         stop("Error: Coefficients contain non-numeric values.")
     }
 
-
-    coefficients <- data.frame(coef = coefs, group = groups, index = 1:p) %>%
-        arrange(desc(abs(coef)))
-
+    coefs_no_intercept <- data.frame(
+        coef = coefs,
+        group = index_final,
+        is_intercept = is.na(index_final) # TRUE for intercept row
+    ) %>% arrange(desc(abs(coef)))
 
     cat("Coefficient extraction successful. First few sorted coefficients:\n")
     print(head(coefficients))
@@ -294,6 +295,6 @@ for (group_option in group_options) {
 }
 
 # TODO logged 25-01-22-wed: still experiencing mismatch between number of groups andnumber of columns; try: remove intercept column when grouping 
-
+# TODO logged 25-01-23-thurs: forgot to include best_lambda when packaging up results into dataframe
 # save results as a RDS
 saveRDS(results, here::here("results", "eda", "grplasso", "grplasso_result.rds"))
