@@ -1,20 +1,90 @@
 # 24-11-19-TODO: debug get_counts; use get_per_rep_hits for now -- row-based method 
+# 25-01-24-TODO: debug package installation (when a package is not already installed) errors; for now I'm copy pasting functions directly on another script I want to run, which is hacky 
 
+# Vector of packages you want to use
+packages <- c("Peptides", "readxl", "dplyr", "readr", 
+              "tidyr", "tidyverse", "tibble", 
+              "data.table", "styler")
 
-library(Peptides)
-library(readxl)
-library(dplyr)
-library(readr)
-library(tidyr)
-library(tidyverse)
-library(tibble)
-library(data.table)
-library(styler)
+# Check if each is installed; if not, install; then load
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
 
-# set working directory to where script is
-SCRIPT_PATH <- rstudioapi::getSourceEditorContext()$path
-setwd(dirname(SCRIPT_PATH))
+# # set working directory to where script is
+# SCRIPT_PATH <- rstudioapi::getSourceEditorContext()$path
+# setwd(dirname(SCRIPT_PATH))
 
+#' get_organism_by_id
+#'
+#' This helper function returns a descriptive label for a peptide based on its ID and
+#' information stored in the provided data frame \code{vir_lib}. If no row matches the
+#' input ID, \code{NA} is returned. The priority for the label is as follows:
+#' \enumerate{
+#'   \item \code{Organism}
+#'   \item \code{Protein names} (prefixed with "protein:")
+#'   \item \code{Species} (prefixed with "species:")
+#'   \item \code{Sequence} (prefixed with "sequence:")
+#' }
+#'
+#' @param id_chr A character string representing the peptide ID.
+#' @param vir_lib A data frame containing peptide information, including fields such as
+#'   \code{id}, \code{Organism}, \code{Protein names}, \code{Species}, and \code{Sequence}.
+#'
+#' @return A character string describing the organism, or one of the fallback labels
+#'   ("protein:", "species:", "sequence:") if organism data is missing. Returns \code{NA}
+#'   if the ID is not found in \code{vir_lib}.
+#'
+#' @examples
+#' # Assuming vir_lib is a data frame with the necessary columns
+#' get_organism_by_id("1234", vir_lib)
+#' get_organism_by_id("9999", vir_lib)  # Returns NA if not found
+#'
+#' @export
+get_organism_by_id <- function(id_chr, vir_lib) {
+  id_numeric <- as.numeric(id_chr)
+  
+  # Filter the row corresponding to the given id
+  row_data <- vir_lib %>% 
+    filter(id == id_numeric)
+  
+  # Check if row_data is empty
+  if (nrow(row_data) == 0) {
+    return(NA)  # Return NA if no matching id is found
+  }
+  
+  # Try to get the organism
+  label <- row_data %>%
+    pull(Organism) %>%
+    first()
+  
+  # Fallbacks if Organism is NA
+  if (is.na(label)) {
+    protein_name <- row_data %>%
+      pull(`Protein names`) %>%
+      first()
+    if (!is.na(protein_name)) {
+      label <- paste("protein:", protein_name)
+    } else {
+      species <- row_data %>%
+        pull(Species) %>%
+        first()
+      if (!is.na(species)) {
+        label <- paste("species:", species)
+      } else {
+        sequence <- row_data %>%
+          pull(Sequence) %>%
+          first()
+        label <- paste("sequence:", sequence)
+      }
+    }
+  }
+  
+  return(label)
+}
 
 # function to map peptide id to corresponding organism names
 # 

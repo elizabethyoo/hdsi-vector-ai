@@ -1,36 +1,66 @@
 # hodge podge of EDA tasks
 
-# load packages
-library(tibble)
-library(tidyr)
-library(dplyr)
-library(ggplot2)
-library(reshape2)
-library(here)
-library(gt)
-library(Matrix)
-library(stringr)
-library(data.table)
-library(purrr)
-library(broom)
-library(parallel) 
-library(gridExtra)  # For arranging multiple plots/tables
-library(ggrepel)    # For enhanced plot labeling
-library(openxlsx)
-library(grid)
-library(pbapply)    # For parallel processing with progress bar
-library(RColorBrewer)
-library(patchwork)
+# CHECKLIST BEFORE RUNNING SCRIPT 
+# 1. Check #Writing to file section 
+# 2. Check #covscan and #virscan sections -- comment out the one not being used
+  # 2-1. Use get_cov_organism_by_id, cov_lib for covscan data and get_organism_by_id, vir_lib for virscan data
+# 3. If using subset data, check #TEST ON A SUBSET section
 
+
+
+if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
+pacman::p_load(
+  tibble,
+  tidyr,
+  dplyr,
+  ggplot2,
+  reshape2,
+  here,
+  gt,
+  Matrix,
+  stringr,
+  data.table,
+  purrr,
+  broom,
+  parallel,
+  gridExtra,      # For arranging multiple plots/tables
+  ggrepel,        # For enhanced plot labeling
+  openxlsx,
+  grid,
+  pbapply,        # For parallel processing with progress bar
+  RColorBrewer,
+  patchwork,
+  viridis
+)
 # anchor project root directory 
 here::i_am("scripts/03_misc_eda_tasks.R")
 
 #============================================================================
 
+# Define number of peptides for testing - default empty string
+NUM_TEST_PEPTIDES <- 500
+
+#Writing to file ===========================================================
+# CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
+TT_RESULTS_FNAME <- "tt-result"
+DATASET_NAME <- paste0("covscan", "_", NUM_TEST_PEPTIDES)
+BASE_FNAME <- paste0(TT_RESULTS_FNAME, "_", DATASET_NAME)
+EXCEL_FNAME <- paste0(BASE_FNAME, "_", DATASET_NAME, ".xlsx")
+
+# Create directory for this run
+RUN_DIR <- here::here("results", "eda", "ttest", paste0(BASE_FNAME, "_", format(Sys.time(), "%Y-%m-%d_%H-%M-%S")))
+dir.create(RUN_DIR, recursive = TRUE)
+
+
 # load data
 vir_z_pat <- readRDS(here::here("data", "processed", "vir_z_pat.rds"))
 vir_lib <- readRDS(here::here("data", "rds", "vir_lib.rds"))
 vir_z <- readRDS(here::here("data", "rds", "vir_z.rds"))
+
+cov_z_pat <- readRDS(here::here("data", "processed", "cov_z_pat.rds"))
+cov_lib <- readRDS(here::here("data", "processed", "cov_lib.rds"))
+# BOOKMARK - sanity check file names, and checklist
+
 # vir_z_vec <- unlist(vir_z[, 3:ncol(vir_z)], use.names = FALSE)# vir_z z-scores flattened into a single vector -- for all peptide histograms
 # summary(vir_z_vec)
 
@@ -155,6 +185,43 @@ vir_z <- readRDS(here::here("data", "rds", "vir_z.rds"))
 # # Randomly pick, say, 5 peptide columns (excluding the 'status' column)
 # set.seed(123)
 # peptide_cols <- sample(names(X_y_vir_z)[-1], 20)  
+
+# this helper function is for covscan; for now comment out when doing stuff with virscan data
+get_cov_organism_by_id <- function(id_chr, cov_lib) {
+  id_numeric <- as.numeric(id_chr)
+  
+  # Filter the row corresponding to the given id
+  row_data <- cov_lib %>% 
+    filter(id == id_numeric)
+  
+  # Check if row_data is empty
+  if (nrow(row_data) == 0) {
+    return(list(
+      Organism = NA,
+      Protein = NA,
+      Sequence = NA,
+      Start = NA,
+      End = NA
+    ))  # Return a list with NAs
+  }
+  
+  # Extract attributes
+  organism <- row_data %>% pull(Organism) %>% first()
+  protein <- row_data %>% pull(Protein) %>% first()
+  sequence <- row_data %>% pull(Sequence) %>% first()
+  start_pos <- row_data %>% pull(start) %>% first()
+  end_pos <- row_data %>% pull(end) %>% first()
+  
+  # Return attributes as a named list
+  return(list(
+    Organism = organism,
+    Protein = protein,
+    Sequence = sequence,
+    Start = start_pos,
+    End = end_pos
+  ))
+}
+
 
 # # TODO: put in a helper functions script 
 # # Function to get organism by col_name
@@ -360,60 +427,101 @@ get_organism_by_id <- function(id_chr, vir_lib) {
 # vir_lib_na_rows_lab <- vir_lib %>% 
 #   filter(if_any(c(Organism, `Protein names`, Species), is.na)) # note: some of these labels may be missing but sequence data is available for all entries of virlib -- not too big of a deal if a label is missing
 
-### data prep
-META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "IP_reagent", 
-                   "Hospitalized", "Pull_down_antibody", 
-                   "patient", "original_id_column") # excludes COVID19_status which will be a part of the final dataframe
+# #covscan ####################################################################
+META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "Hospitalized") # no COVID19_status
 
+X_y_cov_z <- cov_z_pat %>%
+  select(-all_of(META_COL_NO_STATUS)) %>%
+  mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
+  # put COVID19_status as the first column
+  select(COVID19_status, everything()) %>% 
+  mutate(COVID19_status = as.factor(COVID19_status)) # convert to factor
 
-# X_y_vir_z includes z-scores and COVID19_status vs. X_vir_z includes z-scores only
-X_y_vir_z <- vir_z_pat %>%
-    select(-all_of(META_COL_NO_STATUS)) %>%
-    mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
-    # put COVID19_status as the first column
-    select(COVID19_status, everything()) %>% #factorize covid status
-    mutate(COVID19_status = as.factor(COVID19_status))
-X_y_vir_z_dt <- as.data.table(X_y_vir_z)
+cat("Step: Data Preparation\n")
+cat("Dimensions of X_y_cov_z:", dim(X_y_cov_z), "\n")
+print(head(X_y_cov_z))  # Inspect a small portion
 
+X_y_cov_z_dt <- as.data.table(X_y_cov_z)
+X_y_dt <- X_y_cov_z_dt 
+X_dt <- X_y_cov_z_dt %>% select(-COVID19_status)
 
-X_vir_z <- X_y_vir_z %>%
+#TEST ON A SUBSET 
+Randomly select peptides
+TEST_COL_FNAME <- paste0(BASE_FNAME, "_", "test_columns.rds")
+test_peptide_columns <- sample(colnames(X_y_cov_z[,-1]), NUM_TEST_PEPTIDES)
+saveRDS(test_peptide_columns, here::here(RUN_DIR, TEST_COL_FNAME))
+X_y_cov_z <- X_y_cov_z %>% select(all_of(c("COVID19_status", test_peptide_columns))) 
+
+X_cov_z <- X_y_cov_z %>%
     select(-COVID19_status)
-X_vir_z_dt <- as.data.table(X_vir_z)
 
+y_cov_z <- X_y_cov_z$COVID19_status
 
 # Confirm dimensions
-cat("Peptide Data Dimensions:", dim(X_vir_z_dt), "\n")
+cat("Peptide Data Dimensions:", dim(X_cov_z), "\n")
+cat("COVID19_status Dimensions:", length(y_cov_z), "\n")
+# #covscan ####################################################################
+
+
+# # # #virscan ####################################################################
+# ### data prep
+# META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "IP_reagent", 
+#                    "Hospitalized", "Pull_down_antibody", 
+#                    "patient", "original_id_column") # excludes COVID19_status which will be a part of the final dataframe
+
+
+# # X_y_vir_z includes z-scores and COVID19_status vs. X_vir_z includes z-scores only
+# X_y_vir_z <- vir_z_pat %>%
+#     select(-all_of(META_COL_NO_STATUS)) %>%
+#     mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
+#     # put COVID19_status as the first column
+#     select(COVID19_status, everything()) %>% #factorize covid status
+#     mutate(COVID19_status = as.factor(COVID19_status))
+# X_y_vir_z_dt <- as.data.table(X_y_vir_z)
+
+
+# X_vir_z <- X_y_vir_z %>%
+#     select(-COVID19_status)
+# X_vir_z_dt <- as.data.table(X_vir_z)
+
+
+# # Confirm dimensions
+# cat("Peptide Data Dimensions:", dim(X_vir_z_dt), "\n")
+# # # #virscan ####################################################################
 
 
 # Define an output directory for test plots and tables
-output_dir <- here("results", "eda", "viz")
+output_dir <- RUN_DIR
 
 # Define the PDF and Excel file paths for test
-pdf_file <- here(output_dir, "Welchs_Test_AllPeptides_Results.pdf") 
-excel_file <- here(output_dir, "Welchs_Test_AllPeptides_Intermediate_Results.xlsx") 
+pdf_file <- paste0(here(output_dir, BASE_FNAME),".pdf")
+excel_file <- paste0(here(output_dir, BASE_FNAME),".xlsx")
 
 # Set seed for reproducibility
 set.seed(123)
 
+# dataset-neutral input matrices
+
+
 # Define number of peptides for testing
-num_test_peptides <- 1000
+num_test_peptides <- NUM_TEST_PEPTIDES
 
 # Randomly select peptides
-test_peptide_columns <- sample(colnames(X_vir_z_dt), num_test_peptides)
+test_peptide_columns <- sample(colnames(X_dt), num_test_peptides)
 
 # Create the subset dataframe
-X_y_vir_z <- X_y_vir_z_dt  # %>% select(all_of(c("COVID19_status", test_peptide_columns))) # uncomment for testing on small subset
+X_y <- X_y_dt  # %>% select(all_of(c("COVID19_status", test_peptide_columns))) # uncomment for testing on small subset
 
 
 # Extract peptide data by excluding disease status column
-peptide_data_subset <- X_y_vir_z %>%
+peptide_data_subset <- X_y %>%
   select(-COVID19_status)
-disease_status_subset <- X_y_vir_z$COVID19_status
+disease_status_subset <- X_y$COVID19_status
 # Confirm dimensions
 cat("Peptide Data Subset Dimensions:", dim(peptide_data_subset), "\n")
 
 # Define the number of top peptides to visualize (adjust as needed)
-top_n <- 20 # Reduced for the subset
+top_n <- 5 # Reduced for the subset
 
 # Remove peptides with zero variance or any NA values to ensure valid t-tests
 peptide_data_subset <- peptide_data_subset %>%
@@ -440,15 +548,37 @@ t_test_function <- function(peptide_values) {
 # Perform t-tests using apply (serially)
 t_tests_subset <- pbapply(peptide_data_subset, 2, t_test_function)
 
+
+# Function to get the first N words of a string
+get_first_n_words <- function(text, n = 10) {
+  words <- unlist(strsplit(text, "\\s+"))  # Split the text into words
+  paste(head(words, n), collapse = " ")  # Combine the first N words
+}
+
 # Combine results into a dataframe
 results_unequal_subset <- bind_rows(t_tests_subset, .id = "peptide") %>%  
-# add a column Organism using get_organism_by_id function 
-  mutate(organism = map_chr(peptide, get_organism_by_id, vir_lib)) %>%
+# add a column Organism using get_organism_by_id function # CHANGE TO get_cov_organism_by_id for covscan data
+  mutate(
+  attributes = map(peptide, get_cov_organism_by_id, cov_lib),
+  organism = map_chr(attributes, "Organism"),
+  Protein = map_chr(attributes, "Protein"),
+  Sequence = map_chr(attributes, "Sequence"),
+  Start = map_dbl(attributes, "Start"),
+  End = map_dbl(attributes, "End")
+  )%>%
+  select(-attributes) %>% # Remove the intermediate list column
   # if any of the organism values is NA, drop the rows
   filter(!is.na(organism)) %>%
   # rank by p-value
-  arrange(p.value) 
-                          
+  arrange(p.value) %>%
+  mutate(
+  first_n_words = sapply(organism, get_first_n_words, n = 10),  # Get the first N words of `organism`
+  first_char_protein = substr(Protein, 1, 1),                  # Get the first character of `Protein`
+  start_end = paste0(Start, "-", End),                        # Concatenate Start and End with "-"
+  PEP_FULL_LABEL = paste(first_n_words, first_char_protein, start_end, sep = ", ")  # Combine all components
+) %>%
+select(-first_n_words, -first_char_protein, -start_end)  # Optionally drop intermediate columns
+saveRDS(results_unequal_subset, here::here("results", "eda", "ttest", paste0(BASE_FNAME, "_", "results_nopval.rds")))                          
 
 # Adjust p-values for multiple testing using p.adjust (no package needed)
 results_unequal_subset <- results_unequal_subset %>%
@@ -475,7 +605,7 @@ results_unequal_subset <- results_unequal_subset %>%
     TRUE ~ "not significant"
   )) %>%
   mutate(
-    organism = stringr::str_wrap(organism, width = 30)
+    PEP_FULL_LABEL = stringr::str_wrap(PEP_FULL_LABEL, width = 30)
   )
 
 # Select top peptides by p-value
@@ -484,18 +614,18 @@ top_peptides_p_subset <- results_unequal_subset %>%
   arrange(p.adjust) %>%
   slice(1:top_n) %>%
   mutate(
-    organism = stringr::str_wrap(organism, width = 30),
-    organism = factor(organism, levels = unique(organism[order(p.adjust)]))
+    PEP_FULL_LABEL = stringr::str_wrap(PEP_FULL_LABEL, width = 30),
+    PEP_FULL_LABEL = factor(PEP_FULL_LABEL, levels = unique(PEP_FULL_LABEL[order(p.adjust)]))
   )
 
 # Define the organism color palette
-color_palette <- colorRampPalette(brewer.pal(12, "Set3"))(n_distinct(top_peptides_p_subset$organism))
+color_palette <- viridis(n_distinct(top_peptides_p_subset$PEP_FULL_LABEL))
 
 # Map organism levels to colors
-organism_colors <- setNames(color_palette, levels(top_peptides_p_subset$organism))
+organism_colors <- setNames(color_palette, levels(top_peptides_p_subset$PEP_FULL_LABEL))
 
 # Print organism levels and color mapping
-print(levels(top_peptides_p_subset$organism))
+print(levels(top_peptides_p_subset$PEP_FULL_LABEL))
 print(organism_colors)
 
 
@@ -511,7 +641,7 @@ pdf(file = pdf_file, width = 11, height = 8.5)  # Landscape
 # Print messages for debugging before plot
 # Check top peptides data
 print(top_peptides_p_subset)
-print(unique(top_peptides_p_subset$organism))
+print(unique(top_peptides_p_subset$PEP_FULL_LABEL))
 # check all peptides data
 print(results_unequal_subset)
 print(unique(results_unequal_subset$color_group))
@@ -530,12 +660,12 @@ volcano_plot_subset <- ggplot(results_unequal_subset,
   
   # Points for top 20 peptides with organism-specific colors
   geom_point(data = top_peptides_p_subset, 
-             aes(color = organism), 
+             aes(color = PEP_FULL_LABEL), 
              size = 3) +
   
   # Text labels for top 20 peptides with organism-specific colors
   geom_text_repel(data = top_peptides_p_subset, 
-                  aes(label = peptide, color = organism), 
+                  aes(label = peptide, color = PEP_FULL_LABEL), 
                   size = 3, 
                   max.overlaps = Inf, 
                   force = 2, 
@@ -546,7 +676,7 @@ volcano_plot_subset <- ggplot(results_unequal_subset,
   scale_color_manual(
     values = c("control" = "blue", "covid+" = "orange", "not significant" = "grey", organism_colors),
     name = "Significance/Organism",
-    breaks = c("control", "covid+", "not significant", levels(top_peptides_p_subset$organism))
+    breaks = c("control", "covid+", "not significant", levels(top_peptides_p_subset$PEP_FULL_LABEL))
   ) +
   
   # Labels and theme adjustments
@@ -572,20 +702,20 @@ print(volcano_plot_subset)
 
 # 2. Ranking Plot
 # Generate a larger palette
-color_palette <- colorRampPalette(brewer.pal(12, "Set3"))(n_distinct(top_peptides_p_subset$organism))
+color_palette <- colorRampPalette(brewer.pal(12, "Set3"))(n_distinct(top_peptides_p_subset$PEP_FULL_LABEL))
 
 # Wrap long legend text and order the legend
 top_peptides_p_subset <- top_peptides_p_subset %>%
   mutate(
-    organism = stringr::str_wrap(organism, width = 30),
-    organism = factor(organism, levels = unique(organism[order(p.adjust)]))
+    PEP_FULL_LABEL = stringr::str_wrap(PEP_FULL_LABEL, width = 30),
+    PEP_FULL_LABEL = factor(PEP_FULL_LABEL, levels = unique(PEP_FULL_LABEL[order(p.adjust)]))
   )
 
 # Create the ranking plot
 ranking_plot_subset <- ggplot(top_peptides_p_subset, 
                          aes(x = reorder(peptide, -p.adjust), 
                            y = -log10(p.adjust), 
-                           fill = organism)) +
+                           fill = PEP_FULL_LABEL)) +
   geom_bar(stat = "identity") +
   coord_flip() +
   scale_fill_manual(values = color_palette, name = "Organism") +
@@ -632,7 +762,7 @@ print(ranking_plot_subset)
 
 # 4. Table of Top Peptides
 top_peptides_table_subset <- top_peptides_p_subset %>%
-  select(peptide, organism, p.value, p.adjust, statistic, estimate1, estimate2) %>%
+  select(peptide, PEP_FULL_LABEL, p.value, p.adjust, statistic, estimate1, estimate2) %>%
   rename(
     id = peptide, 
     t.statistic = statistic, 
@@ -640,7 +770,7 @@ top_peptides_table_subset <- top_peptides_p_subset %>%
     mean.z.covidpos = estimate2 
   ) %>% # For better human readability  
   arrange(p.adjust) %>%
-  mutate(organism = str_wrap(organism, width = 30)) %>%
+  mutate(PEP_FULL_LABEL = str_wrap(PEP_FULL_LABEL, width = 30)) %>%
   # Add row numbers for better readability
   mutate(row.num = row_number()) %>%
   select(row.num, everything())
