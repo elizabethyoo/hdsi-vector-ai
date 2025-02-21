@@ -83,9 +83,9 @@ get_organism_by_id <- function(id_chr, cov_lib, vir_lib) {
 
 # ----------------------------------------------------------------------------
 # 4) Parameters & Output Filenames
-NUM_TEST_PEPTIDES <- ""  # e.g., "100" for testing subset or "" for full
+NUM_TEST_PEPTIDES <- "100"  # e.g., "100" for testing subset or "" for full
 RF_RESULTS_FNAME <- "rf-result"
-DATASET_NAME <- paste0("covscan", "_", NUM_TEST_PEPTIDES)
+DATASET_NAME <- paste0("combined", "_", NUM_TEST_PEPTIDES)
 BASE_FNAME <- paste0(RF_RESULTS_FNAME, "_", DATASET_NAME)
 EXCEL_FNAME <- paste0(BASE_FNAME, "_", DATASET_NAME, ".xlsx")
 
@@ -98,14 +98,14 @@ dir.create(RUN_DIR, recursive = TRUE)
 cat("Step: Loading and preparing data...\n")
 
 # Example: Covscan Data (Adjust as needed for your actual dataset selection)
-cov_z_pat <- readRDS(here::here("data", "processed", "cov_z_pat.rds"))
-com_z_pat <- readRDS(here::here("data", "processed", "Shrock_vir_cov_combined" "combined_z_pat.rds"))
+# cov_z_pat <- readRDS(here::here("data", "processed", "cov_z_pat.rds"))
+com_z_pat <- readRDS(here::here("data", "processed", "Shrock_vir_cov_combined", "combined_z_pat.rds"))
 cov_lib   <- readRDS(here::here("data", "processed", "cov_lib.rds"))
 vir_lib   <- readRDS(here::here("data", "rds", "vir_lib.rds"))  # if needed
 
 # Remove meta columns, turn COVID19_status into factor, etc.
 META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "Hospitalized")
-X_y_df <- cov_z_pat %>%
+X_y_df <- com_z_pat %>%  
   select(-all_of(META_COL_NO_STATUS)) %>%
   mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
   select(COVID19_status, everything()) %>%
@@ -212,11 +212,16 @@ rf_train_test <- function(X_y, base_fname, run_dir, cov_lib, vir_lib) {
 }
 
 # 6B) Cross-Validation (N-fold) ----------------------------------------------
-rf_cross_validation <- function(X_y, base_fname, run_dir, num_folds = 10, cov_lib = NULL, vir_lib = NULL) {
-  # X_y is a dataframe with first column = COVID19_status
-  # base_fname, run_dir for file saving
-  # num_folds: number of cross-validation folds
-  # cov_lib, vir_lib for annotation (optional)
+rf_cross_validation <- function(X_y, 
+                                base_fname, 
+                                run_dir, 
+                                num_folds = 10, 
+                                cov_lib = NULL, 
+                                vir_lib = NULL) {
+  # X_y: Dataframe with COVID19_status as the first column
+  # base_fname, run_dir: Filenames/paths for saving
+  # num_folds: Number of cross-validation folds
+  # cov_lib, vir_lib: Libraries for organism annotation (optional)
   
   cat(">>> Cross-Validation (", num_folds, "-fold )...\n", sep = "")
   
@@ -227,9 +232,9 @@ rf_cross_validation <- function(X_y, base_fname, run_dir, num_folds = 10, cov_li
   set.seed(618)
   folds <- caret::createFolds(y, k = num_folds, list = TRUE, returnTrain = TRUE)
   
-  roc_data_list    <- list()         # Store ROC points
-  auc_values       <- numeric()      # Store fold-wise AUC
-  importance_list  <- list()         # NEW: Store fold-wise feature importance
+  roc_data_list   <- list()         # Store ROC points
+  auc_values      <- numeric()      # Store fold-wise AUC
+  importance_list <- list()         # Store per-fold feature importances + p-values
   
   # Loop over folds
   for (i in seq_along(folds)) {
@@ -242,18 +247,27 @@ rf_cross_validation <- function(X_y, base_fname, run_dir, num_folds = 10, cov_li
     y_test  <- y[-train_idx]
     
     # Train Random Forest
-    rf_model <- randomForest::randomForest(X_train, y_train, importance = TRUE)
+    rf_model <- randomForest(X_train, y_train, importance = TRUE)
     
-    # 1) Store Feature Importance for this fold
+    # 1) Extract raw importance
     fold_importance <- as.data.frame(randomForest::importance(rf_model))
     fold_importance$Feature <- rownames(fold_importance)
-    fold_importance$Fold    <- i
-    importance_list[[i]]    <- fold_importance
     
-    # 2) Predicted probabilities for ROC
-    prob_predictions <- predict(rf_model, X_test, type = "prob")[,2]
+    # 2) Extract p-values from randomForestExplainer
+    fold_explainer <- measure_importance(rf_model) %>%
+      dplyr::mutate(Feature = as.character(variable))
     
-    # 3) ROC/AUC
+    # Merge p-values into importance
+    fold_importance <- fold_importance %>%
+      dplyr::left_join(fold_explainer %>% dplyr::select(Feature, p_value), by = "Feature") %>%
+      dplyr::mutate(Fold = i)
+    
+    # Store in list
+    importance_list[[i]] <- fold_importance
+    
+    # 3) Compute ROC and AUC
+    prob_predictions <- predict(rf_model, X_test, type = "prob")[, 2]
+    
     pred <- ROCR::prediction(prob_predictions, as.numeric(y_test) - 1)
     perf <- ROCR::performance(pred, "tpr", "fpr")
     auc  <- ROCR::performance(pred, "auc")@y.values[[1]]
@@ -270,37 +284,35 @@ rf_cross_validation <- function(X_y, base_fname, run_dir, num_folds = 10, cov_li
   # (A) Combine & Aggregate Feature Importance
   # ---------------------------
   
-  # Merge all fold importances into one data frame
+  # Merge all fold importances
   all_importance <- dplyr::bind_rows(importance_list)
   
-  # For example, if you'd like to average 'MeanDecreaseGini' across folds:
-  # (Adjust to your chosen metric; e.g., 'IncNodePurity' or others)
+  # Example: Average MeanDecreaseGini and p_value across folds
   importance_summary <- all_importance %>%
     dplyr::group_by(Feature) %>%
     dplyr::summarise(
       MeanDecreaseGini = mean(MeanDecreaseGini, na.rm = TRUE),
+      avg_p_value      = mean(p_value, na.rm = TRUE),  # or median if you prefer
       sd_MDg           = sd(MeanDecreaseGini, na.rm = TRUE),
-      # Add any other summary stats if desired
-      folds_included   = n()  # how many folds had that feature (should be all folds)
+      folds_included   = n()
     ) %>%
     dplyr::arrange(desc(MeanDecreaseGini))
   
-  # (Optional) Annotate peptides with organism information
-  # if your 'Feature' values match what get_organism_by_id expects:
+  # (Optional) Annotate peptides with organism info if your Feature 
+  # matches what get_organism_by_id expects ("c_###", "v_###", etc.)
   # 
   # importance_summary <- importance_summary %>%
-  #   mutate(attributes = map(Feature, ~ get_organism_by_id(.x, cov_lib, vir_lib)),
-  #          organism   = map_chr(attributes, "Organism")) %>%
+  #   mutate(attributes = purrr::map(Feature, ~ get_organism_by_id(.x, cov_lib, vir_lib)),
+  #          organism   = purrr::map_chr(attributes, "Organism")) %>%
   #   select(-attributes)
-  
-  # Save this aggregated importance data
+
+  # Save aggregated feature importance
   importance_csv <- paste0(base_fname, "_cv_importance_summary.csv")
   readr::write_csv(importance_summary, file.path(run_dir, importance_csv))
   
   # ---------------------------
   # (B) Combine & Aggregate ROC Curves
   # ---------------------------
-  
   roc_data <- do.call(rbind, roc_data_list)
   
   # Compute mean +/- SD TPR at fixed FPR points
@@ -334,13 +346,14 @@ rf_cross_validation <- function(X_y, base_fname, run_dir, num_folds = 10, cov_li
     ) +
     theme_minimal()
   
-  # Save AUC values and the final plot
+  # Save AUC values
   AUC_FNAME <- paste0(base_fname, "_cv_auc_values.csv")
   readr::write_csv(
     data.frame(Fold = seq_along(auc_values), AUC = auc_values), 
     file.path(run_dir, AUC_FNAME)
   )
   
+  # Save ROC plot
   ROC_PLOT_FNAME <- paste0(base_fname, "_cv_roc_plot.png")
   ggsave(file.path(run_dir, ROC_PLOT_FNAME), plot = roc_plot, width = 10, height = 6, dpi = 300)
   

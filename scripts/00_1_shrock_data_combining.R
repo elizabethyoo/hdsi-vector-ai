@@ -83,14 +83,14 @@ saveRDS(vir_z_pat, file = here(WRITE_DIR, "vir_z_pat_renamed_ids.rds"))
 
 # TODO: Remember to save modified data
 # select the first ten rows of the dataframes
-vir_z_pat <- vir_z_pat %>% head(10)
-cov_z_pat <- cov_z_pat %>% head(10)
-vir_lib <- vir_lib %>% head(10)
-cov_lib <- cov_lib %>% head(10)
-dim(vir_lib)
-dim(cov_lib)
-dim(vir_z_pat)
-dim(cov_z_pat)
+# vir_z_pat <- vir_z_pat %>% head(10)
+# cov_z_pat <- cov_z_pat %>% head(10)
+# vir_lib <- vir_lib %>% head(10)
+# cov_lib <- cov_lib %>% head(10)
+# dim(vir_lib)
+# dim(cov_lib)
+# dim(vir_z_pat)
+# dim(cov_z_pat)
 
 # full join the two based on "id column"
 combined_lib <- full_join(vir_lib, cov_lib, by = "id")
