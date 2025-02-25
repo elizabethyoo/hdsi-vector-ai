@@ -278,10 +278,9 @@ run_grplasso_reg_parallel <- function(X, Y, groups = NULL, split_type = c("train
         Y_valid <- Y[valid_idx]
 
         cl <- makeCluster(num_cores)
-        clusterExport(cl, varlist = c("X_train", "Y_train", "index_final", "X_valid", "Y_valid", "grplasso", "DEBUG_LOG"))
+        clusterExport(cl, varlist = c("X_train", "Y_train", "index_final", "X_valid", "Y_valid", "grplasso", "DEBUG_LOG"), envir = environment())
         clusterEvalQ(cl, library(grplasso))
         clusterEvalQ(cl, library(dplyr))
-
 
         cv_results <- parSapply(cl, lambdas, function(lambda) {
             sink(DEBUG_LOG, append = TRUE)
@@ -397,31 +396,71 @@ cat("save results as RDS in", RUN_DIR, "\n")
 #============================================================================
 # post-processing
 #============================================================================
+RUN_DIR <- "/n/home01/egraff/hdsi-vector-ai/results/eda/grplasso/grplasso-result_covscan_100_2025-02-25_13-16-48"
+PAR_RESULTS_FNAME <- "grplasso-result_covscan_100_fin.rds"
+# Load results and add organism names
+results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
-# # Load results and add organism names
-# results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
-# for (opt in names(results)) {
-#   organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
-#       get_organism_by_id(x, cov_lib, vir_lib)$Organism
-#   })
-#   organisms <- c("NA - intercept", organisms)
-#   results[[opt]]$coefs$organism <- organisms
-# }
+# Summarize key model results
+cat("Best lambda selected:", results$best_lambda, "\n")
+cat("Test MSE:", results$test_mse, "\n")
 
-# # save results as RDS in RUN_DIR
-# saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
+# Create a summary table of coefficients excluding the intercept
+coefs_df <- results$coefs
+coefs_no_int <- subset(coefs_df, is_intercept == FALSE)
+coefs_no_int <- coefs_no_int[order(-abs(coefs_no_int$coef)), ]
+print(head(coefs_no_int, 10))  # print top 10 coefficients
 
-# # Save results to a spreadsheet with separate sheets per grouping option
-# wb <- createWorkbook()
-# for (setting in names(results)) {
-#     addWorksheet(wb, setting)
-#     writeData(wb, sheet = setting, results[[setting]]$coefs)
-# }
+# Load ggplot2 for visualization (if not already loaded)
+library(ggplot2)
 
-# saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
+# Define a common color scale using the default hue scale
+common_colors <- scale_fill_hue()
 
-# # end of script
-# cat("Script complete! Check outputs in:", RUN_DIR, "\n")
+# Plot 1: Horizontal bar plot (ensure same color scale)
+p1 <- ggplot(coefs_no_int, aes(x = reorder(feats, coef), y = coef, fill = factor(group))) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "Peptide ID", y = "Coefficient",
+       fill = "Group",
+       title = "Group Lasso Coefficients (Excluding Intercept)") +
+  common_colors +
+  theme_minimal()
+
+print(p1)
+
+# Plot 2: Boxplot using the exact same color scale as p1
+p2 <- ggplot(coefs_no_int, aes(x = factor(group), y = coef, fill = factor(group))) +
+  geom_boxplot() +
+  labs(x = "Group", y = "Coefficient",
+       title = "Coefficient Distribution by Group") +
+  common_colors +
+  theme_minimal()
+
+print(p2)
+
+for (opt in names(results)) {
+  organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
+      get_organism_by_id(x, cov_lib, vir_lib)$Organism
+  })
+  organisms <- c("NA - intercept", organisms)
+  results[[opt]]$coefs$organism <- organisms
+}
+
+# save results as RDS in RUN_DIR
+saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
+
+# Save results to a spreadsheet with separate sheets per grouping option
+wb <- createWorkbook()
+for (setting in names(results)) {
+    addWorksheet(wb, setting)
+    writeData(wb, sheet = setting, results[[setting]]$coefs)
+}
+
+saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
+
+# end of script
+cat("Script complete! Check outputs in:", RUN_DIR, "\n")
 
 # non parallel processing ver - is very slow
 
@@ -641,70 +680,70 @@ cat("save results as RDS in", RUN_DIR, "\n")
 #============================================================================
 
 # Detect number of available cores, leaving 1 core free for system stability
-num_cores <- detectCores() - 1
+# num_cores <- detectCores() - 1
 
-# Define a function to process each group option in parallel
-process_group_option <- function(group_option) {
-    sink(DEBUG_LOG, append = TRUE)
-    cat("Processing group option:", group_option, "\n")
-    sink()
+# # Define a function to process each group option in parallel
+# process_group_option <- function(group_option) {
+#     sink(DEBUG_LOG, append = TRUE)
+#     cat("Processing group option:", group_option, "\n")
+#     sink()
     
-    result <- tryCatch({
-        run_grplasso_reg_parallel(X_vir_z, y_vir_z, groups = group_option, split_type = "train_validate_test", visualize = TRUE)
-    }, error = function(e) {
-        sink(DEBUG_LOG, append = TRUE)
-        cat("Error encountered for group option:", group_option, "\n")
-        cat("Error message:", conditionMessage(e), "\n")
-        sink()
-        return(NULL)  # Return NULL for failed cases
-    })
+#     result <- tryCatch({
+#         run_grplasso_reg_parallel(X_vir_z, y_vir_z, groups = group_option, split_type = "train_validate_test", visualize = TRUE)
+#     }, error = function(e) {
+#         sink(DEBUG_LOG, append = TRUE)
+#         cat("Error encountered for group option:", group_option, "\n")
+#         cat("Error message:", conditionMessage(e), "\n")
+#         sink()
+#         return(NULL)  # Return NULL for failed cases
+#     })
 
-    if (!is.null(result)) {
-        sink(DEBUG_LOG, append = TRUE)
-        cat("Group option:", group_option, "\n")
-        cat("Test MSE:", result$test_mse, "\n")
-        cat("Best Lambda:", result$best_lambda, "\n\n")
-        sink()
-        return(list(group_option = group_option, result = result))
-    } else {
-        sink(DEBUG_LOG, append = TRUE)
-        cat("Skipping group option due to an error:", group_option, "\n")
-        sink()
-        return(NULL)
-    }
-}
+#     if (!is.null(result)) {
+#         sink(DEBUG_LOG, append = TRUE)
+#         cat("Group option:", group_option, "\n")
+#         cat("Test MSE:", result$test_mse, "\n")
+#         cat("Best Lambda:", result$best_lambda, "\n\n")
+#         sink()
+#         return(list(group_option = group_option, result = result))
+#     } else {
+#         sink(DEBUG_LOG, append = TRUE)
+#         cat("Skipping group option due to an error:", group_option, "\n")
+#         sink()
+#         return(NULL)
+#     }
+# }
 
-# Run in parallel across group options
-parallel_results <- mclapply(group_options, process_group_option, mc.cores = num_cores)
+# # Run in parallel across group options
+# parallel_results <- mclapply(group_options, process_group_option, mc.cores = num_cores)
 
-# Convert list to named format for easier access
-for (res in parallel_results) {
-    if (!is.null(res)) {
-        results[[res$group_option]] <- res$result
-    }
-}
+# # Convert list to named format for easier access
+# for (res in parallel_results) {
+#     if (!is.null(res)) {
+#         results[[res$group_option]] <- res$result
+#     }
+# }
 
-# Load results and add organism names
-results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
+# # Load results and add organism names
+# results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
 
-for (opt in names(results)) {
-    organisms <- get_organism_by_id(results[[opt]]$coefs$feats[-1], cov_lib, vir_lib)
-    organisms <- c("NA - intercept", organisms)
-    results[[opt]]$coefs$organism <- organisms
-}
+# for (opt in names(results)) {
+#     organisms <- get_organism_by_id(results[[opt]]$coefs$feats[-1], cov_lib, vir_lib)
+#     organisms <- c("NA - intercept", organisms)
+#     results[[opt]]$coefs$organism <- organisms
+# }
 
-# save results as RDS in RUN_DIR
-saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
+# # save results as RDS in RUN_DIR
+# saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
-# Save results to a spreadsheet with separate sheets per grouping option
-wb <- createWorkbook()
-for (setting in names(results)) {
-    addWorksheet(wb, setting)
-    writeData(wb, sheet = setting, results[[setting]]$coefs)
-}
+# # Save results to a spreadsheet with separate sheets per grouping option
+# wb <- createWorkbook()
+# for (setting in names(results)) {
+#     addWorksheet(wb, setting)
+#     writeData(wb, sheet = setting, results[[setting]]$coefs)
+# }
 
-saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
+# saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
 
 
 #============================================================================
