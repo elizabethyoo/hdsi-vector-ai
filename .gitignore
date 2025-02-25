@@ -1,4 +1,8 @@
 *.egg-info
+*.png
+*.rds
+*.csv
+
 data
 llm-malaria.code-workspace
 
