@@ -83,11 +83,11 @@ get_organism_by_id <- function(id_chr, cov_lib, vir_lib) {
 
 # ----------------------------------------------------------------------------
 # 4) Parameters & Output Filenames
-NUM_TEST_PEPTIDES <- "100"  # e.g., "100" for testing subset or "" for full
+NUM_TEST_PEPTIDES <- ""  # e.g., "100" for testing subset or "" for full
 RF_RESULTS_FNAME <- "rf-result"
 DATASET_NAME <- paste0("combined", "_", NUM_TEST_PEPTIDES)
 BASE_FNAME <- paste0(RF_RESULTS_FNAME, "_", DATASET_NAME)
-EXCEL_FNAME <- paste0(BASE_FNAME, "_", DATASET_NAME, ".xlsx")
+EXCEL_FNAME <- paste0(BASE_FNAME, ".xlsx")
 
 # Create results directory, unique for this run
 RUN_DIR <- here::here("results", "eda", "rf", paste0(BASE_FNAME, "_", format(Sys.time(), "%Y-%m-%d_%H-%M-%S")))
@@ -113,6 +113,7 @@ X_y_df <- com_z_pat %>%
 
 # (Optional) Test on a Subset
 if (NUM_TEST_PEPTIDES != "") {
+  set.seed(12345)
   TEST_COL_FNAME <- paste0(BASE_FNAME, "_", "test_columns.rds")
   test_peptide_columns <- sample(colnames(X_y_df[,-1]), as.numeric(NUM_TEST_PEPTIDES))
   saveRDS(test_peptide_columns, here::here("results", "eda", "rf", TEST_COL_FNAME))
@@ -135,7 +136,7 @@ rf_train_test <- function(X_y, base_fname, run_dir, cov_lib, vir_lib) {
   y <- X_y$COVID19_status
   
   cat(">>> Train/Test Split...\n")
-  set.seed(618)
+  set.seed(12345)
   train_idx <- sample(seq_len(nrow(X)), size = 0.8 * nrow(X))
   X_train   <- X[train_idx, ]
   y_train   <- y[train_idx]
@@ -153,6 +154,8 @@ rf_train_test <- function(X_y, base_fname, run_dir, cov_lib, vir_lib) {
           file.path(run_dir, TR_TE_SPLIT_FNAME))
   
   cat(">>> Fitting Random Forest (train/test)\n")
+  # # debug: try to limit the values of the random forest params
+  # rf_model <- randomForest(X_train, y_train, importance = TRUE, ntree = 100, maxnodes = 10)
   rf_model <- randomForest(X_train, y_train, importance = TRUE)
   print(rf_model)
   
@@ -194,7 +197,7 @@ rf_train_test <- function(X_y, base_fname, run_dir, cov_lib, vir_lib) {
       x = "False Positive Rate",
       y = "True Positive Rate"
     ) +
-    annotate("text", x = 0.75, y = 0.25, label = sprintf("AUC = %.2f", auc_test), color = "blue") +
+    annotate("text", x = 0.75, y = 0.25, label = sprintf("AUC = %.4f", auc_test), color = "blue") +
     theme_minimal()
   
   ROC_FNAME <- paste0(base_fname, "_roc_curve.png")
@@ -229,7 +232,7 @@ rf_cross_validation <- function(X_y,
   X <- X_y %>% dplyr::select(-COVID19_status)
   y <- X_y$COVID19_status
   
-  set.seed(618)
+  set.seed(12345)
   folds <- caret::createFolds(y, k = num_folds, list = TRUE, returnTrain = TRUE)
   
   roc_data_list   <- list()         # Store ROC points
@@ -247,6 +250,8 @@ rf_cross_validation <- function(X_y,
     y_test  <- y[-train_idx]
     
     # Train Random Forest
+    # # debug: try to limit the values of the random forest params
+    # rf_model <- randomForest(X_train, y_train, importance = TRUE, ntree = 100, maxnodes = 10)
     rf_model <- randomForest(X_train, y_train, importance = TRUE)
     
     # 1) Extract raw importance
@@ -344,8 +349,10 @@ rf_cross_validation <- function(X_y,
       x = "False Positive Rate",
       y = "True Positive Rate"
     ) +
-    theme_minimal()
-  
+    theme_minimal() +
+    annotate("text", x = 0.75, y = 0.25, 
+             label = sprintf("Mean AUC = %.4f ± %.4f", mean(auc_values), sd(auc_values)), 
+             color = "blue")
   # Save AUC values
   AUC_FNAME <- paste0(base_fname, "_cv_auc_values.csv")
   readr::write_csv(
@@ -416,6 +423,13 @@ importance_data <- importance_data %>%
 # How many features to show?
 TOP_NUM <- min(20, nrow(importance_data))
 
+# Helper function for extracting strings
+# Function to get the first N words of a string
+get_first_n_words <- function(text, n = 10) {
+  words <- unlist(strsplit(text, "\\s+"))  # Split the text into words
+  paste(head(words, n), collapse = " ")  # Combine the first N words
+}
+
 # Detailed annotation
 importance_data_topN <- importance_data %>%
   arrange(desc(MeanDecreaseGini)) %>%
@@ -428,9 +442,17 @@ importance_data_topN <- importance_data %>%
     Start      = map_dbl(attributes, "Start"),
     End        = map_dbl(attributes, "End")
   ) %>%
-  select(-attributes) %>%
+  select(-attributes) %>% # Remove the intermediate list column
   filter(!is.na(organism)) %>%
-  distinct(organism, .keep_all = TRUE)
+  distinct(organism, .keep_all = TRUE) %>%
+  mutate(
+    PEP_FULL_LABEL = paste(
+      sapply(organism, get_first_n_words, n = 10),  # First N words of `organism`
+      substr(Protein, 1, 1),                        # First character of `Protein`
+      paste0(Start, "-", End),                      # Start and End concatenated
+      sep = ", "
+    )
+  )
 
 # Write top importance to CSV
 IMP_FNAME <- paste0(BASE_FNAME, "_importance_data_top", TOP_NUM, ".csv")
@@ -438,6 +460,20 @@ write.csv(importance_data_topN, file.path(RUN_DIR, IMP_FNAME))
 
 cat("Top features saved to:", IMP_FNAME, "\n")
 cat("Feature Importance dimension:", dim(importance_data_topN), "\n")
+
+# Debugging: Check resulting dataframe
+print(head(importance_data_topN))
+cat("Step: Feature Importance\n")
+cat("Dimensions of importance_data:", dim(importance_data), "\n")
+print(head(importance_data))  # Inspect top rows
+
+cat("Step: Top Features Selection\n")
+cat("Dimensions of importance_data_topN:", dim(importance_data_topN), "\n")
+print(head(importance_data_topN))  # Inspect selected top features
+
+cat("Step: Organism Mapping\n")
+cat("Unique organisms in importance_data_topN:\n")
+print(unique(importance_data_topN$organism))
 
 # Filter & rank by p-value
 ranked_p_values <- importance_data_topN %>%
@@ -465,23 +501,28 @@ importance_palette <- viridis::viridis(n_distinct(importance_data_topN$organism)
 
 # Bar plot of MeanDecreaseGini
 p_imp <- ggplot(importance_data_topN, 
-                aes(x = reorder(pep_label, MeanDecreaseGini), 
-                    y = MeanDecreaseGini, 
-                    fill = organism)) +
+        aes(x = reorder(peptide, MeanDecreaseGini), 
+          y = MeanDecreaseGini, 
+          fill = PEP_FULL_LABEL)) +
   geom_bar(stat = "identity") +
   coord_flip() +
-  scale_fill_manual(values = importance_palette, name = "Organism") +
+  scale_fill_manual(values = importance_palette, name = "Peptide (Organism)") +
   theme_minimal() +
   labs(
-    title = "Random Forest - Feature Importance",
-    x = "Peptide (Organism)",
-    y = "Mean Decrease Gini"
+  title = "Random Forest - Feature Importance",
+  x = "Peptide (Organism)",
+  y = "Mean Decrease Gini"
   ) +
   theme(
-    legend.position = "right",
-    axis.text.y     = element_text(size = 8),
-    plot.title      = element_text(size = 14, face = "bold", hjust = 0.5)
-  )
+  legend.position = "right",
+  axis.text.y     = element_text(size = 8),
+  plot.title      = element_text(size = 14, face = "bold", hjust = 0.5),
+  legend.text     = element_text(size = 8)
+  ) +
+  guides(fill = guide_legend(label.theme = element_text(size = 8, lineheight = 0.9)))
+
+# String wrap the legend labels
+p_imp <- p_imp + scale_fill_discrete(labels = function(x) stringr::str_wrap(x, width = 30))
 
 IMP_PLOT_FNAME <- paste0(BASE_FNAME, "_feature_importance.png")
 ggsave(file.path(RUN_DIR, IMP_PLOT_FNAME), plot = p_imp, width = 10, height = 6, dpi = 300)

@@ -1,10 +1,3 @@
-# CHECKLIST BEFORE RUNNING SCRIPT 
-# 1. Check #Writing to file section 
-# 2. Check #covscan and #virscan sections -- comment out the one not being used
-  # 2-1. Use get_cov_organism_by_id, cov_lib for covscan data and get_organism_by_id, vir_lib for virscan data
-# 3. If using subset data, check #TEST ON A SUBSET section
-
-
 if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 pacman::p_load(
 dplyr,
@@ -23,11 +16,71 @@ parallel
 # anchor project root directory 
 here::i_am("scripts/05_eda_grplasso.R")
 
+# helper function -- works on any of covscan, virscan, or combination of both so long as
+# peptide id is in "c_" or "v_" format
+# see formatted data in /n/home01/egraff/hdsi-vector-ai/data/processed/Shrock_vir_cov_combined
+get_organism_by_id <- function(id_chr, cov_lib, vir_lib) {
+  # Ensure the id columns are character for comparison if they are factors
+  if (is.factor(cov_lib$id)) cov_lib$id <- as.character(cov_lib$id)
+  if (is.factor(vir_lib$id)) vir_lib$id <- as.character(vir_lib$id)
+  
+  if (startsWith(id_chr, "c_")) {
+    # If cov_lib$id is numeric, extract a numeric value; otherwise, use the full id string.
+    if (is.numeric(cov_lib$id)) {
+      id_val <- as.numeric(sub("^c_", "", id_chr))
+    } else {
+      id_val <- id_chr
+    }
+    row_data <- cov_lib %>% filter(id == id_val)
+    if (nrow(row_data) == 0) {
+      return(list(
+        Organism = NA,
+        Protein  = NA,
+        Sequence = NA,
+        Start    = NA,
+        End      = NA
+      ))
+    }
+    return(list(
+      Organism = row_data %>% pull(Organism) %>% first(),
+      Protein  = row_data %>% pull(Protein) %>% first(),
+      Sequence = row_data %>% pull(Sequence) %>% first(),
+      Start    = row_data %>% pull(start)    %>% first(),
+      End      = row_data %>% pull(end)      %>% first()
+    ))
+    
+  } else if (startsWith(id_chr, "v_")) {
+    if (is.numeric(vir_lib$id)) {
+      id_val <- as.numeric(sub("^v_", "", id_chr))
+    } else {
+      id_val <- id_chr
+    }
+    row_data <- vir_lib %>% filter(id == id_val)
+    if (nrow(row_data) == 0) {
+      return(list(
+        Organism = NA,
+        Protein  = NA,
+        Sequence = NA,
+        Start    = NA,
+        End      = NA
+      ))
+    }
+    return(list(
+      Organism = row_data %>% pull(Organism) %>% first(),
+      Protein  = row_data %>% pull(`Protein names`) %>% first(),
+      Sequence = row_data %>% pull(Sequence) %>% first(),
+      Start    = row_data %>% pull(start)    %>% first(),
+      End      = row_data %>% pull(end)      %>% first()
+    ))
+  } else {
+    stop("Unrecognized peptide id prefix (must be 'c_' or 'v_').")
+  }
+}
 
 # #Writing to file ===========================================================
 #TEST ON A SUBSET
 # Define number of peptides for testing - default empty string
-NUM_TEST_PEPTIDES <- ""
+NUM_TEST_PEPTIDES <- "100"
 
 # CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
 GRPLASSO_RESULTS_FNAME <- "grplasso-result"
@@ -37,12 +90,14 @@ EXCEL_FNAME <- paste0(BASE_FNAME, "_", DATASET_NAME, ".xlsx")
 
 # Create directory for this run
 RUN_DIR <- here::here("results", "eda", "grplasso", paste0(BASE_FNAME, "_", format(Sys.time(), "%Y-%m-%d_%H-%M-%S")))
-dir.create(RUN_DIR, recursive = TRUE)
+if (!dir.exists(RUN_DIR)) {
+    dir.create(RUN_DIR, recursive = TRUE)
+}
 # CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
 # Writing to file ===========================================================
 
 # Get number of cores from SLURM, fallback to detectCores() - 1 if not set
-num_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
+num_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK", unset = parallel::detectCores() - 1))
 if (is.na(num_cores) || num_cores <= 0) {
     num_cores <- parallel::detectCores() - 1
 }
@@ -56,17 +111,16 @@ cat("Using", num_cores, "cores for parallel processing\n")
 
 DEBUG_LOG <- "grplasso_debug_log.txt"
 
-# load data
-vir_z_pat <- readRDS(here::here("data", "processed", "vir_z_pat.rds"))
-vir_lib <- readRDS(here::here("data", "rds", "vir_lib.rds"))
-vir_z <- readRDS(here::here("data", "rds", "vir_z.rds"))
+# load data 
+# pull formatted dfs from /n/home01/egraff/hdsi-vector-ai/data/processed/Shrock_vir_cov_combined
+DATA_DIR <- here::here("data", "processed", "Shrock_vir_cov_combined")
+cat("Step: Loading and preparing data...\n")
+com_z_pat <- readRDS(file.path(DATA_DIR, "combined_z_pat.rds")) # combined
+vir_z_pat <- readRDS(file.path(DATA_DIR, "vir_z_pat_renamed_ids.rds")) # virscan
+cov_z_pat <- readRDS(file.path(DATA_DIR, "cov_z_pat_renamed_ids.rds")) # covscan
 
-
-# covscan data============================================================================
-# load data
-# covscan data
-cov_z_pat <- readRDS(here::here("data", "processed", "cov_z_pat.rds"))
-cov_lib <- readRDS(here::here("data", "processed", "cov_lib.rds"))
+cov_lib   <- readRDS(file.path(DATA_DIR, "cov_lib_renamed_ids.rds"))  # if needed
+vir_lib   <- readRDS(file.path(DATA_DIR, "vir_lib_renamed_ids.rds"))  # if needed
 
 # Prepare data
 META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "Hospitalized")
@@ -74,15 +128,15 @@ META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "Hospitalized")
 X_y_cov_z <- cov_z_pat %>%
   select(-all_of(META_COL_NO_STATUS)) %>%
   mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
-  select(COVID19_status, everything()) %>% 
-  mutate(COVID19_status = as.factor(COVID19_status))
-
+  select(COVID19_status, everything())
+  
 # TEST ON A SUBSET ==========================================================
-seed.set(123)
 if (NUM_TEST_PEPTIDES != "") {
+  set.seed(12345)  
   TEST_COL_FNAME <- paste0(BASE_FNAME, "_", "test_columns.rds")
   test_peptide_columns <- sample(colnames(X_y_cov_z[,-1]), as.numeric(NUM_TEST_PEPTIDES))
-  saveRDS(test_peptide_columns, here::here("results", "eda", "rf", TEST_COL_FNAME))
+  # save in RUN_DIR
+  saveRDS(test_peptide_columns, file.path(RUN_DIR, TEST_COL_FNAME))
   X_y_cov_z <- X_y_cov_z %>% select(all_of(c("COVID19_status", test_peptide_columns)))
 }
 
@@ -98,149 +152,44 @@ y <- y_cov_z %>%
 cat("Peptide Data Dimensions:", dim(X_cov_z), "\n")
 cat("Response Vector Length:", length(y_cov_z), "\n")
 
-# modify get_organism_from_id to account for covid_lib
-# TODO change get_organism_from_id to get_vir_organism_by_id
-# Need to extract: Protein, start, end, (peptide) sequence
-# also cannot query on the headnode for rhinovirus A, Human Herpesvirus4 and HIV-1
-get_cov_organism_by_id <- function(id_chr, cov_lib) {
-  id_numeric <- as.numeric(id_chr)
-  
-  # Filter the row corresponding to the given id
-  row_data <- cov_lib %>% 
-    filter(id == id_numeric)
-  
-  # Check if row_data is empty
-  if (nrow(row_data) == 0) {
-    return(NA)  # Return NA if no matching id is found
-  }
-  # Try to get the Organism, Protein, Sequence, start, and end
-  label <- row_data %>%
-    pull(Organism) %>%
-    first()
-  
-  protein <- row_data %>%
-    pull(Protein) %>%
-    first()
-  
-  sequence <- row_data %>%
-    pull(Sequence) %>%
-    first()
-  
-  start_pos <- row_data %>%
-    pull(start) %>%
-    first()
-  
-  end_pos <- row_data %>%
-    pull(end) %>%
-    first()
-  
-  # Combine the extracted information into a single string
-  label <- paste("Organism:", label, 
-                 "Protein:", protein, 
-                 "Sequence:", sequence, 
-                 "Start:", start_pos, 
-                 "End:", end_pos)
-  
-  return(label)
-}
+
+# #============================================================================
+# # virscan data============================================================================
+# ### data prep
+# META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "IP_reagent", 
+#                    "Hospitalized", "Pull_down_antibody", 
+#                    "patient", "original_id_column") # excludes COVID19_status which will be a part of the final dataframe
 
 
-#' get_organism_by_id
-#'
-#' This helper function returns descriptors for one or more peptide IDs based on data 
-#' in the provided vir_lib data frame. The priority for the label is:
-#' 1) Organism
-#' 2) Protein names (prefixed "protein:")
-#' 3) Species (prefixed "species:")
-#' 4) Sequence (prefixed "sequence:")
-#' If no row is found for an ID, NA is returned.
-#'
-#' @param id_chr A character vector (or single value) of peptide IDs.
-#' @param vir_lib A data frame with fields such as "id", "Organism", "Protein names", 
-#'   "Species", and "Sequence".
-#' @return A character vector of labels or NA where not found.
-#'
-#' @examples
-#' # Assuming vir_lib is a data frame with the necessary columns
-#' get_organism_by_id(c("1234", "9999"), vir_lib)
-#'
-#' @export
-get_organism_by_id <- function(id_chr, vir_lib) {
-    ids_numeric <- suppressWarnings(as.numeric(id_chr))
-    
-    sapply(ids_numeric, function(single_id) {
-        row_data <- vir_lib %>%
-            filter(id == single_id)
-        
-        if (nrow(row_data) == 0) {
-            return(NA_character_)
-        }
-        
-        label <- row_data %>%
-            pull(Organism) %>%
-            first()
-        
-        if (is.na(label)) {
-            protein_name <- row_data %>%
-                pull(`Protein names`) %>%
-                first()
-            if (!is.na(protein_name)) {
-                label <- paste("protein:", protein_name)
-            } else {
-                species <- row_data %>%
-                    pull(Species) %>%
-                    first()
-                if (!is.na(species)) {
-                    label <- paste("species:", species)
-                } else {
-                    sequence <- row_data %>%
-                        pull(Sequence) %>%
-                        first()
-                    label <- paste("sequence:", sequence)
-                }
-            }
-        }
-        label
-    })
-}
+# # X_y_vir_z includes z-scores and COVID19_status vs. X_vir_z includes z-scores only
+# X_y_vir_z <- vir_z_pat %>%
+#     select(-all_of(META_COL_NO_STATUS)) %>%
+#     mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
+#     # put COVID19_status as the first column
+#     select(COVID19_status, everything())
 
-#============================================================================
-# virscan data============================================================================
-### data prep
-META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "IP_reagent", 
-                   "Hospitalized", "Pull_down_antibody", 
-                   "patient", "original_id_column") # excludes COVID19_status which will be a part of the final dataframe
+# # TEST ON A SUBSET ==========================================================
+# set.seed(123)
+# if (NUM_TEST_PEPTIDES != "") {
+#   TEST_COL_FNAME <- paste0(BASE_FNAME, "_", "test_columns.rds")
+#   test_peptide_columns <- sample(colnames(X_y_vir_z[,-1]), as.numeric(NUM_TEST_PEPTIDES))
+#   saveRDS(test_peptide_columns, file.path(RUN_DIR, TEST_COL_FNAME))
+#   X_y_vir_z <- X_y_vir_z %>% select(all_of(c("COVID19_status", test_peptide_columns)))
+# }
 
+# X_vir_z <- X_y_vir_z %>% select(-COVID19_status)
+# y_vir_z <- X_y_vir_z$COVID19_status
 
-# X_y_vir_z includes z-scores and COVID19_status vs. X_vir_z includes z-scores only
-X_y_vir_z <- vir_z_pat %>%
-    select(-all_of(META_COL_NO_STATUS)) %>%
-    mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
-    # put COVID19_status as the first column
-    select(COVID19_status, everything())
+# X <- X_vir_z %>%
+#   as.matrix()
 
-# TEST ON A SUBSET ==========================================================
-seed.set(123)
-if (NUM_TEST_PEPTIDES != "") {
-  TEST_COL_FNAME <- paste0(BASE_FNAME, "_", "test_columns.rds")
-  test_peptide_columns <- sample(colnames(X_y_vir_z[,-1]), as.numeric(NUM_TEST_PEPTIDES))
-  saveRDS(test_peptide_columns, here::here("results", "eda", "rf", TEST_COL_FNAME))
-  X_y_vir_z <- X_y_vir_z %>% select(all_of(c("COVID19_status", test_peptide_columns)))
-}
+# y <- y_vir_z %>%
+#   as.numeric()
 
-X_vir_z <- X_y_vir_z %>% select(-COVID19_status)
-y_vir_z <- X_y_vir_z$COVID19_status
-
-X <- X_vir_z %>%
-  as.matrix()
-
-y <- y_vir_z %>%
-  as.numeric()
-
-# Confirm dimensions
-sink(DEBUG_LOG, append = TRUE)
-cat("Peptide Data Dimensions:", dim(X_vir_z), "\n")
-cat("Response Vector Length:", length(y_vir_z), "\n")
+# # Confirm dimensions
+# sink(DEBUG_LOG, append = TRUE)
+# cat("Peptide Data Dimensions:", dim(X), "\n")
+# cat("Response Vector Length:", length(y), "\n")
 
 # parallel processing ver
 
@@ -269,35 +218,36 @@ run_grplasso_reg_parallel <- function(X, Y, groups = NULL, split_type = c("train
     }
     sink()
 
-    if (is.null(groups)) {
-        stop("Error: Groups not provided. Please specify a grouping option.")
-    } else if (groups == "corr") {
-        corr_matrix <- cor(X)
-        dist_matrix <- as.dist(1 - abs(corr_matrix))
-        hc <- hclust(dist_matrix, method = "average")
-        groups <- cutree(hc, k = desired_number_of_groups)
-    } else if (groups == "pca") {
-        pca_result <- prcomp(X, scale. = TRUE)
-        loading_matrix <- abs(pca_result$rotation[, 1:min(ncol(X), 10)])
-        groups <- apply(loading_matrix, 1, which.max)
-    } else if (groups == "org") {
-
+    if (groups == "Organism") {
+    # Extract peptide IDs from the column names of X
+    peptide_ids <- colnames(X)
+    if (is.null(peptide_ids)) {
+        stop("Error: X must have column names representing peptide IDs.")
     }
-    else {
-        groups <- rep(1:ncol(X), each = 1)
+    
+    # For each peptide ID, apply get_organism_by_id() to retrieve the organism value
+    organisms <- sapply(peptide_ids, function(pid) {
+        result <- get_organism_by_id(pid, cov_lib, vir_lib)
+        return(result$Organism)
+    })
+    
+    # Identify indices for valid (non-NA) organism entries
+    valid_idx <- which(!is.na(organisms))
+    if (length(valid_idx) < length(organisms)) {
+        warning("Excluding ", length(organisms) - length(valid_idx), " peptides with NA organism.")
     }
-    index_final <- c(NA, groups)
-
-    sink(DEBUG_LOG, append = TRUE)
-    cat("Number of groups provided:", length(groups), "\n")
-    cat("Number of features in X:", ncol(X), "\n")
-    sink()
-
-    if (length(groups) != ncol(X)) {
-        stop("Error: Mismatch between group length and number of features in X.")
+    
+    # Subset X (and peptide_ids and organisms) to exclude peptides with NA organism
+    X <<- X[, valid_idx, drop = FALSE]  # Using <<- to update X in the parent environment if needed
+    peptide_ids <- peptide_ids[valid_idx]
+    organisms <- organisms[valid_idx]
+    
+    # Convert organism labels to a numeric group index and build index_final
+    group_indices <- as.integer(as.factor(organisms))
+    index_final <- c(NA, group_indices)
     }
 
-    set.seed(123)
+    set.seed(12345)
     train_idx <- sample(1:n, size = train_ratio * n)
     if (split_type == "train_validate_test") {
         valid_idx <- setdiff(sample(1:n, size = (train_ratio + valid_ratio) * n), train_idx)
@@ -330,13 +280,15 @@ run_grplasso_reg_parallel <- function(X, Y, groups = NULL, split_type = c("train
         cl <- makeCluster(num_cores)
         clusterExport(cl, varlist = c("X_train", "Y_train", "index_final", "X_valid", "Y_valid", "grplasso", "DEBUG_LOG"))
         clusterEvalQ(cl, library(grplasso))
+        clusterEvalQ(cl, library(dplyr))
+
 
         cv_results <- parSapply(cl, lambdas, function(lambda) {
             sink(DEBUG_LOG, append = TRUE)
             cat("Running cross-validation for lambda =", lambda, "\n")
             sink()
 
-            fit <- grplasso(X_train, Y_train, index = index_final, lambda = lambda, model = LinReg())
+            fit <- grplasso(X_train, Y_train, index = index_final, lambda = lambda, model = LogReg())
             mse <- mean((Y_valid - predict(fit, X_valid))^2)
 
             sink(DEBUG_LOG, append = TRUE)
@@ -352,7 +304,7 @@ run_grplasso_reg_parallel <- function(X, Y, groups = NULL, split_type = c("train
         best_lambda <- lambdas[1]
     }
 
-    final_model <- grplasso(X_train, Y_train, index = index_final, lambda = best_lambda, model = LinReg())
+    final_model <- grplasso(X_train, Y_train, index = index_final, lambda = best_lambda, model = LogReg())
     Y_test_pred <- predict(final_model, X_test)
     test_mse <- mean((Y_test - Y_test_pred)^2)
 
@@ -385,9 +337,91 @@ run_grplasso_reg_parallel <- function(X, Y, groups = NULL, split_type = c("train
         coefs = coefs_no_intercept,
         best_lambda = best_lambda
     )
+
 }
 
+#============================================================================
+# parallel call to function 
+#============================================================================
 
+# Detect number of available cores, leaving 1 core free for system stability
+num_cores <- detectCores() - 1
+PAR_RESULTS_FNAME <- paste0(BASE_FNAME, "_", "fin.rds")
+one_grp <- c("Organism")
+# call grplasso function for single group option "Organism"
+results <- run_grplasso_reg_parallel(X, y, groups = one_grp, split_type = "train_validate_test", visualize = TRUE, num_cores = num_cores)
+saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
+cat("save results as RDS in", RUN_DIR, "\n")
+
+# # Define a function to process each group option in parallel
+# process_group_option <- function(group_option) {
+#   sink(DEBUG_LOG, append = TRUE)
+#   cat("Processing group option:", group_option, "\n")
+#   sink()
+  
+#   result <- tryCatch({
+#     run_grplasso_reg_parallel(X, y, groups = group_option, split_type = "train_validate_test", visualize = TRUE, num_cores = num_cores)
+#   }, error = function(e) {
+#     sink(DEBUG_LOG, append = TRUE)
+#     cat("Error encountered for group option:", group_option, "\n")
+#     cat("Error message:", conditionMessage(e), "\n")
+#     sink()
+#     return(NULL)  # Return NULL for failed cases
+#   })
+
+#   if (!is.null(result)) {
+#     sink(DEBUG_LOG, append = TRUE)
+#     cat("Group option:", group_option, "\n")
+#     cat("Test MSE:", result$test_mse, "\n")
+#     cat("Best Lambda:", result$best_lambda, "\n\n")
+#     sink()
+#     return(list(group_option = group_option, result = result))
+#   } else {
+#     sink(DEBUG_LOG, append = TRUE)
+#     cat("Skipping group option due to an error:", group_option, "\n")
+#     sink()
+#     return(NULL)
+#   }
+# }
+
+
+# results <- list()
+# # Convert list to named format for easier access
+# for (res in parallel_results) {
+#     if (!is.null(res)) {
+#         results[[res$group_option]] <- res$result
+#     }
+# }
+
+
+#============================================================================
+# post-processing
+#============================================================================
+
+# # Load results and add organism names
+# results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
+# for (opt in names(results)) {
+#   organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
+#       get_organism_by_id(x, cov_lib, vir_lib)$Organism
+#   })
+#   organisms <- c("NA - intercept", organisms)
+#   results[[opt]]$coefs$organism <- organisms
+# }
+
+# # save results as RDS in RUN_DIR
+# saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
+
+# # Save results to a spreadsheet with separate sheets per grouping option
+# wb <- createWorkbook()
+# for (setting in names(results)) {
+#     addWorksheet(wb, setting)
+#     writeData(wb, sheet = setting, results[[setting]]$coefs)
+# }
+
+# saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
+
+# # end of script
+# cat("Script complete! Check outputs in:", RUN_DIR, "\n")
 
 # non parallel processing ver - is very slow
 
@@ -605,8 +639,6 @@ run_grplasso_reg_parallel <- function(X, Y, groups = NULL, split_type = c("train
 #============================================================================
 # parallel call to function 
 #============================================================================
-group_options <- c("corr", "pca") # ,"none")
-results <- list()
 
 # Detect number of available cores, leaving 1 core free for system stability
 num_cores <- detectCores() - 1
@@ -652,18 +684,18 @@ for (res in parallel_results) {
     }
 }
 
-# Save results as an RDS file
-saveRDS(results, here::here("results", "eda", "grplasso", "grplasso_result_parallel.rds"))
-
 # Load results and add organism names
-results <- readRDS(here::here("results", "eda", "grplasso", "grplasso_result_parallel.rds"))
+results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
+
+
 for (opt in names(results)) {
-    organisms <- get_organism_by_id(results[[opt]]$coefs$feats[-1], vir_lib)
+    organisms <- get_organism_by_id(results[[opt]]$coefs$feats[-1], cov_lib, vir_lib)
     organisms <- c("NA - intercept", organisms)
     results[[opt]]$coefs$organism <- organisms
 }
 
-saveRDS(results, here::here("results", "eda", "grplasso", "grplasso_result_parallel.rds"))
+# save results as RDS in RUN_DIR
+saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
 # Save results to a spreadsheet with separate sheets per grouping option
 wb <- createWorkbook()
@@ -671,12 +703,6 @@ for (setting in names(results)) {
     addWorksheet(wb, setting)
     writeData(wb, sheet = setting, results[[setting]]$coefs)
 }
-
-results_dir <- here::here("results", "eda", "grplasso")
-if (!dir.exists(results_dir)) {
-    dir.create(results_dir, recursive = TRUE)
-}
-
 
 saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
 
