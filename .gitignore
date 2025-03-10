@@ -12,6 +12,7 @@ llm-malaria.code-workspace
 .here
 .vscode/
 results/processed/
+scripts/slurm
 scripts/.RData
 scripts/.Rhistory
 scripts/Shrock2020_regression.nb.html
