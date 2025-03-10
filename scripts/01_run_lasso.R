@@ -146,7 +146,7 @@ LASSO_FNAME <- paste0(BASE_FNAME, "_", "model_fit.rds")
 saveRDS(lasso, here::here(RUN_DIR, LASSO_FNAME))
 
 # TEMP - DELETE AFTER TEMP TASK
-# lasso_rds <- readRDS(file.path("/n/home01/egraff/hdsi-vector-ai/results/eda/reglasso/lasso-result_combined_2025-03-10_16-55-45/lasso-result_combined"))
+lasso <- readRDS("/n/home01/egraff/hdsi-vector-ai/results/eda/reglasso/lasso-result_combined_2025-03-10_21-32-43/lasso-result_combined_model_fit.rds")
 
 plot(lasso)
 title(main="LASSO covid status vs. all z-scores")
@@ -211,5 +211,5 @@ nonzero_coef_tb <- nonzero_coef_df %>%
 print(nonzero_coef_tb)
 # webshot::install_phantomjs() # for saving to .png but doesn't work -- could be a FAS server thing
 TB_FNAME <- paste0(BASE_FNAME,"_table",".html")
-gtsave(data = nonzero_coef_tb, filename = paste0(".html"), path = RUN_DIR)
+gtsave(data = nonzero_coef_tb, filename=TB_FNAME, path = RUN_DIR)
 
