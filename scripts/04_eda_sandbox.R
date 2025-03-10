@@ -32,6 +32,12 @@ pacman::p_load(
 # anchor project root directory 
 here::i_am("scripts/04_eda_randomforest.R")
 
+lasso_results <- readRDS("/n/home01/egraff/hdsi-vector-ai/results/lasso_full_result.rds")
+
+head(lasso_results)
+head(lasso_results$coefficients)
+
+dim(lasso_results$coefficients)
 
 # helper function
 # and loading original data
@@ -81,6 +87,9 @@ get_organism_by_id <- function(id_chr, vir_lib) {
 }
 
 #============================================================================
+
+
+
 
 # load data
 vir_z_pat <- readRDS(here::here("data", "processed", "vir_z_pat.rds"))

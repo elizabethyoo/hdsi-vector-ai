@@ -84,7 +84,7 @@ NUM_TEST_PEPTIDES <- "100"
 
 # CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
 GRPLASSO_RESULTS_FNAME <- "grplasso-result"
-DATASET_NAME <- paste0("covscan", "_", NUM_TEST_PEPTIDES)
+DATASET_NAME <- paste0("combined", "_", NUM_TEST_PEPTIDES)
 BASE_FNAME <- paste0(GRPLASSO_RESULTS_FNAME, "_", DATASET_NAME)
 EXCEL_FNAME <- paste0(BASE_FNAME, "_", DATASET_NAME, ".xlsx")
 
@@ -94,6 +94,8 @@ if (!dir.exists(RUN_DIR)) {
     dir.create(RUN_DIR, recursive = TRUE)
 }
 # CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
+
+
 # Writing to file ===========================================================
 
 # Get number of cores from SLURM, fallback to detectCores() - 1 if not set
@@ -122,7 +124,10 @@ cov_z_pat <- readRDS(file.path(DATA_DIR, "cov_z_pat_renamed_ids.rds")) # covscan
 cov_lib   <- readRDS(file.path(DATA_DIR, "cov_lib_renamed_ids.rds"))  # if needed
 vir_lib   <- readRDS(file.path(DATA_DIR, "vir_lib_renamed_ids.rds"))  # if needed
 
-# Prepare data
+# Prepare data # CHANGE DEPENDING ON WHICH DATASET YOURE USING 
+# TODO isolate data processing step in a separate script s.t. nothing in analysis script is specific to dataset being used;
+# abstract to X and y
+
 META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "Hospitalized")
 
 X_y_cov_z <- cov_z_pat %>%
@@ -143,14 +148,16 @@ if (NUM_TEST_PEPTIDES != "") {
 X_cov_z <- X_y_cov_z %>% select(-COVID19_status)
 y_cov_z <- X_y_cov_z$COVID19_status
 
+cat("Peptide Data Dimensions:", dim(X_cov_z), "\n")
+cat("Response Vector Length:", length(y_cov_z), "\n")
+
 X <- X_cov_z %>%
   as.matrix()
 
 y <- y_cov_z %>%
   as.numeric()
+####################################################################  
 
-cat("Peptide Data Dimensions:", dim(X_cov_z), "\n")
-cat("Response Vector Length:", length(y_cov_z), "\n")
 
 
 # #============================================================================
@@ -396,71 +403,77 @@ cat("save results as RDS in", RUN_DIR, "\n")
 #============================================================================
 # post-processing
 #============================================================================
-RUN_DIR <- "/n/home01/egraff/hdsi-vector-ai/results/eda/grplasso/grplasso-result_covscan_100_2025-02-25_13-16-48"
-PAR_RESULTS_FNAME <- "grplasso-result_covscan_100_fin.rds"
-# Load results and add organism names
-results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
+# RUN_DIR <- "/n/home01/egraff/hdsi-vector-ai/results/eda/grplasso/grplasso-result_covscan_100_2025-02-25_13-16-48"
+# PAR_RESULTS_FNAME <- "grplasso-result_covscan_100_fin.rds"
+# # Load results and add organism names
+# results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
-# Summarize key model results
-cat("Best lambda selected:", results$best_lambda, "\n")
-cat("Test MSE:", results$test_mse, "\n")
+# # Summarize key model results
+# cat("Best lambda selected:", results$best_lambda, "\n")
+# cat("Test MSE:", results$test_mse, "\n")
 
-# Create a summary table of coefficients excluding the intercept
-coefs_df <- results$coefs
-coefs_no_int <- subset(coefs_df, is_intercept == FALSE)
-coefs_no_int <- coefs_no_int[order(-abs(coefs_no_int$coef)), ]
-print(head(coefs_no_int, 10))  # print top 10 coefficients
+# # Create a summary table of coefficients excluding the intercept
+# coefs_df <- results$coefs
+# coefs_no_int <- subset(coefs_df, is_intercept == FALSE)
+# coefs_no_int <- coefs_no_int[order(-abs(coefs_no_int$coef)), ]
+# print(head(coefs_no_int, 10))  # print top 10 coefficients
 
-# Load ggplot2 for visualization (if not already loaded)
-library(ggplot2)
+# # Load ggplot2 for visualization (if not already loaded)
+# library(ggplot2)
 
-# Define a common color scale using the default hue scale
-common_colors <- scale_fill_hue()
+# # Define a common color scale using the default hue scale
+# common_colors <- scale_fill_hue()
 
-# Plot 1: Horizontal bar plot (ensure same color scale)
-p1 <- ggplot(coefs_no_int, aes(x = reorder(feats, coef), y = coef, fill = factor(group))) +
-  geom_bar(stat = "identity") +
-  coord_flip() +
-  labs(x = "Peptide ID", y = "Coefficient",
-       fill = "Group",
-       title = "Group Lasso Coefficients (Excluding Intercept)") +
-  common_colors +
-  theme_minimal()
+# # Plot 1: Horizontal bar plot (ensure same color scale)
+# p1 <- ggplot(coefs_no_int, aes(x = reorder(feats, coef), y = coef, fill = factor(group))) +
+#   geom_bar(stat = "identity") +
+#   coord_flip() +
+#   labs(x = "Peptide ID", y = "Coefficient",
+#        fill = "Group",
+#        title = "Group Lasso Coefficients (Excluding Intercept)") +
+#   common_colors +
+#   theme_minimal()
 
-print(p1)
+# print(p1)
 
-# Plot 2: Boxplot using the exact same color scale as p1
-p2 <- ggplot(coefs_no_int, aes(x = factor(group), y = coef, fill = factor(group))) +
-  geom_boxplot() +
-  labs(x = "Group", y = "Coefficient",
-       title = "Coefficient Distribution by Group") +
-  common_colors +
-  theme_minimal()
+# # Plot 2: Boxplot using the exact same color scale as p1
+# p2 <- ggplot(coefs_no_int, aes(x = factor(group), y = coef, fill = factor(group))) +
+#   geom_boxplot() +
+#   labs(x = "Group", y = "Coefficient",
+#        title = "Coefficient Distribution by Group") +
+#   common_colors +
+#   theme_minimal()
 
-print(p2)
+# print(p2)
 
-for (opt in names(results)) {
-  organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
-      get_organism_by_id(x, cov_lib, vir_lib)$Organism
-  })
-  organisms <- c("NA - intercept", organisms)
-  results[[opt]]$coefs$organism <- organisms
-}
+# for (opt in names(results)) {
+#   organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
+#       get_organism_by_id(x, cov_lib, vir_lib)$Organism
+#   })
+#   organisms <- c("NA - intercept", organisms)
+#   results[[opt]]$coefs$organism <- organisms
+# }
 
-# save results as RDS in RUN_DIR
-saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
+# # save results as RDS in RUN_DIR
+# saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
-# Save results to a spreadsheet with separate sheets per grouping option
-wb <- createWorkbook()
-for (setting in names(results)) {
-    addWorksheet(wb, setting)
-    writeData(wb, sheet = setting, results[[setting]]$coefs)
-}
+# # Save results to a spreadsheet with separate sheets per grouping option
+# wb <- createWorkbook()
+# for (setting in names(results)) {
+#     addWorksheet(wb, setting)
+#     writeData(wb, sheet = setting, results[[setting]]$coefs)
+# }
 
-saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
+# saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
 
-# end of script
-cat("Script complete! Check outputs in:", RUN_DIR, "\n")
+# # end of script
+# cat("Script complete! Check outputs in:", RUN_DIR, "\n")
+
+
+
+
+
+
 
 # non parallel processing ver - is very slow
 
