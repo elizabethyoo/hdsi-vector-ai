@@ -10,7 +10,8 @@ data.table,
 openxlsx,
 pbapply,
 grplasso,
-parallel
+parallel,
+purrr
 )
 
 # anchor project root directory 
@@ -77,6 +78,13 @@ get_organism_by_id <- function(id_chr, cov_lib, vir_lib) {
   }
 }
 
+# Helper function to get the first N words of a string
+get_first_n_words <- function(text, n = 10) {
+  words <- unlist(strsplit(text, "\\s+"))  # Split the text into words
+  paste(head(words, n), collapse = " ")  # Combine the first N words
+}
+
+
 # #Writing to file ===========================================================
 #TEST ON A SUBSET
 # Define number of peptides for testing - default empty string
@@ -124,7 +132,8 @@ cov_z_pat <- readRDS(file.path(DATA_DIR, "cov_z_pat_renamed_ids.rds")) # covscan
 cov_lib   <- readRDS(file.path(DATA_DIR, "cov_lib_renamed_ids.rds"))  # if needed
 vir_lib   <- readRDS(file.path(DATA_DIR, "vir_lib_renamed_ids.rds"))  # if needed
 
-# Prepare data # CHANGE DEPENDING ON WHICH DATASET YOURE USING 
+# CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
+# Prepare data  
 # TODO isolate data processing step in a separate script s.t. nothing in analysis script is specific to dataset being used;
 # abstract to X and y
 
@@ -156,7 +165,8 @@ X <- X_cov_z %>%
 
 y <- y_cov_z %>%
   as.numeric()
-####################################################################  
+# CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
+
 
 
 
@@ -403,56 +413,83 @@ cat("save results as RDS in", RUN_DIR, "\n")
 #============================================================================
 # post-processing
 #============================================================================
-# RUN_DIR <- "/n/home01/egraff/hdsi-vector-ai/results/eda/grplasso/grplasso-result_covscan_100_2025-02-25_13-16-48"
-# PAR_RESULTS_FNAME <- "grplasso-result_covscan_100_fin.rds"
-# # Load results and add organism names
-# results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
+RUN_DIR <- "/n/home01/egraff/hdsi-vector-ai/results/eda/grplasso/grplasso-result_covscan_100_2025-02-25_13-16-48"
+PAR_RESULTS_FNAME <- "grplasso-result_covscan_100_fin.rds"
+# Load results and add organism names
+results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
-# # Summarize key model results
-# cat("Best lambda selected:", results$best_lambda, "\n")
-# cat("Test MSE:", results$test_mse, "\n")
+# Summarize key model results
+cat("Best lambda selected:", results$best_lambda, "\n")
+cat("Test MSE:", results$test_mse, "\n")
 
-# # Create a summary table of coefficients excluding the intercept
-# coefs_df <- results$coefs
-# coefs_no_int <- subset(coefs_df, is_intercept == FALSE)
-# coefs_no_int <- coefs_no_int[order(-abs(coefs_no_int$coef)), ]
-# print(head(coefs_no_int, 10))  # print top 10 coefficients
+# Create a summary table of coefficients excluding the intercept
+coefs_df <- results$coefs
+coefs_no_int <- subset(coefs_df, is_intercept == FALSE)
+coefs_no_int <- coefs_no_int %>%
+  arrange(desc(coef)) %>% # Sort by coefficient value
+  mutate(
+    attributes = map(feats, get_organism_by_id, cov_lib, vir_lib),
+    organism = map_chr(attributes, "Organism"),
+    Protein = map_chr(attributes, "Protein"),
+    Sequence = map_chr(attributes, "Sequence"),
+    Start = map_dbl(attributes, "Start"),
+    End = map_dbl(attributes, "End")
+  ) %>%
+  select(-attributes) %>% # Remove the intermediate list column
+  filter(!is.na(organism)) %>%
+  distinct(organism, .keep_all = TRUE) %>% 
+  mutate(
+    first_n_words = sapply(organism, get_first_n_words, n = 10),  # Get the first N words of `organism`
+    first_char_protein = substr(Protein, 1, 1),                  # Get the first character of `Protein`
+    start_end = paste0(Start, "-", End),                        # Concatenate Start and End with "-"
+    PEP_FULL_LABEL = paste(first_n_words, first_char_protein, start_end, sep = ", ")  # Combine all components
+  ) %>%
+  select(-first_n_words, -first_char_protein, -start_end)
 
-# # Load ggplot2 for visualization (if not already loaded)
-# library(ggplot2)
+# # sanity check -- verified there are ten unique (group, organism) pairs
+# unique_pairs <- coefs_no_int %>%
+#   distinct(group, organism)
 
-# # Define a common color scale using the default hue scale
-# common_colors <- scale_fill_hue()
+# Save the coefficients to a CSV file
+COEF_FNAME_CSV <- paste0(BASE_FNAME, "_", "coefs.csv")
+write.csv(coefs_no_int, here::here(RUN_DIR, COEF_FNAME_CSV), row.names = FALSE)
 
-# # Plot 1: Horizontal bar plot (ensure same color scale)
-# p1 <- ggplot(coefs_no_int, aes(x = reorder(feats, coef), y = coef, fill = factor(group))) +
-#   geom_bar(stat = "identity") +
-#   coord_flip() +
-#   labs(x = "Peptide ID", y = "Coefficient",
-#        fill = "Group",
-#        title = "Group Lasso Coefficients (Excluding Intercept)") +
-#   common_colors +
-#   theme_minimal()
+# Visualization =================================================================
+# Define a common color scale using the default hue scale
+common_colors <- scale_fill_hue()
 
-# print(p1)
+# Plot 1: Horizontal bar plot (ensure same color scale)
 
-# # Plot 2: Boxplot using the exact same color scale as p1
-# p2 <- ggplot(coefs_no_int, aes(x = factor(group), y = coef, fill = factor(group))) +
-#   geom_boxplot() +
-#   labs(x = "Group", y = "Coefficient",
-#        title = "Coefficient Distribution by Group") +
-#   common_colors +
-#   theme_minimal()
+p1 <- ggplot(coefs_no_int, aes(x = reorder(feats, coef), y = coef, fill = factor(group))) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "Peptide ID", y = "Coefficient",
+       fill = paste0("Group (Organism) ", organism),
+       title = "Group Lasso Coefficients (Excluding Intercept)") +
+  common_colors +
+  theme_minimal()
 
-# print(p2)
+print(p1)
 
-# for (opt in names(results)) {
-#   organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
-#       get_organism_by_id(x, cov_lib, vir_lib)$Organism
-#   })
-#   organisms <- c("NA - intercept", organisms)
-#   results[[opt]]$coefs$organism <- organisms
-# }
+print(p1)
+
+# Plot 2: Boxplot using the exact same color scale as p1
+p2 <- ggplot(coefs_no_int, aes(x = factor(group), y = coef, fill = factor(group))) +
+  geom_boxplot() +
+  labs(x = "Group", y = "Coefficient",
+       title = "Coefficient Distribution by Group") +
+  common_colors +
+  theme_minimal()
+
+print(p2)
+
+for (opt in names(results)) {
+  organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
+      get_organism_by_id(x, cov_lib, vir_lib)$Organism
+  })
+  organisms <- c("NA - intercept", organisms)
+  results[[opt]]$coefs$organism <- organisms
+}
 
 # # save results as RDS in RUN_DIR
 # saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
@@ -757,46 +794,6 @@ cat("save results as RDS in", RUN_DIR, "\n")
 # }
 
 # saveWorkbook(wb, file = file.path(RUN_DIR, EXCEL_FNAME), overwrite = TRUE)  
-
-
-#============================================================================
-# non parallel call to function, comment when testing parallel version
-#============================================================================
-
-
-# group_options <- c("corr", "pca") # , "none")
-# results <- list()
-
-# # Run the function with different group options and compare printed results
-# for (group_option in group_options) {
-#     sink(DEBUG_LOG, append = TRUE)
-
-#     cat("Processing group option:", group_option, "\n")
-#     result <- tryCatch({
-#         run_grplasso_reg(X_vir_z, y_vir_z, groups = group_option, split_type = "train_validate_test", visualize = TRUE)
-#     }, error = function(e) {
-#         cat("Error encountered for group option:", group_option, "\n")
-#         cat("Error message:", conditionMessage(e), "\n")
-#         return(NULL)  # Return NULL for failed cases
-#     })
-    
-#     if (!is.null(result)) {
-#         results[[as.character(group_option)]] <- result
-#         cat("Group option:", group_option, "\n")
-#         cat("Test MSE:", result$test_mse, "\n")
-#         cat("Best Lambda:", result$best_lambda, "\n\n")
-#     } else {
-#         cat("Skipping group option due to an error:", group_option, "\n")
-#     }
-#     sink()
-# }
-
-# # TODO logged 25-01-22-wed: still experiencing mismatch between number of groups andnumber of columns; try: remove intercept column when grouping 
-# # TODO logged 25-01-23-thurs: forgot to include best_lambda when packaging up results into dataframe
-# # save results as a RDS
-# saveRDS(results, here::here("results", "eda", "grplasso", "grplasso_result.rds"))
-
-
 
 
 # # Load results
