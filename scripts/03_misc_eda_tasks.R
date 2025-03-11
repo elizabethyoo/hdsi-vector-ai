@@ -35,6 +35,16 @@ pacman::p_load(
 # anchor project root directory 
 here::i_am("scripts/03_misc_eda_tasks.R")
 
+
+HUM_MOS_DIR <- "/n/holylabs/LABS/junweil_lab/Lab/hdsi-vector-ai/data/Internal_PhIP-Seq_data/Human-Anopheles_and_Aedes_exposure"
+vec_lib <- openxlsx::read.xlsx( "/n/holylabs/LABS/junweil_lab/Lab/hdsi-vector-ai/data/Internal_PhIP-Seq_data/VectorScan_Library_1_2.xlsx", sheet = 1)
+# read xlsx file potentially with multiple sheets
+
+vec_bin_1_meta <- openxlsx::read.xlsx("/n/holylabs/LABS/junweil_lab/Lab/hdsi-vector-ai/data/Internal_PhIP-Seq_data/Human-Anopheles_and_Aedes_exposure/2025_03_06_Plates14and15_VectorScan_AllSeroreactive_Binary.xlsx", sheet = 1)
+vec_bin_new <- openxlsx::read.xlsx("/n/holylabs/LABS/junweil_lab/Lab/hdsi-vector-ai/data/Internal_PhIP-Seq_data/Human-Anopheles_and_Aedes_exposure/2025_03_06_Plates14and15_VectorScan_NewAt44_combined_Binary.xlsx", sheet = 1)
+vec_bin_new_2 <- openxlsx::read.xlsx("/n/holylabs/LABS/junweil_lab/Lab/hdsi-vector-ai/data/Internal_PhIP-Seq_data/Human-Anopheles_and_Aedes_exposure/2025_03_06_Plates14and15_VectorScan_NewAt44_combined_Binary.xlsx", sheet = 2)
+
+
 #============================================================================
 
 # Define number of peptides for testing - default empty string

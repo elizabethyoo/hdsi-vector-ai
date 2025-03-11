@@ -1,3 +1,5 @@
+
+
 if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 pacman::p_load(
 dplyr,
@@ -16,6 +18,10 @@ purrr
 
 # anchor project root directory 
 here::i_am("scripts/05_eda_grplasso.R")
+
+
+
+
 
 # helper function -- works on any of covscan, virscan, or combination of both so long as
 # peptide id is in "c_" or "v_" format
@@ -88,11 +94,11 @@ get_first_n_words <- function(text, n = 10) {
 # #Writing to file ===========================================================
 #TEST ON A SUBSET
 # Define number of peptides for testing - default empty string
-NUM_TEST_PEPTIDES <- "100"
+NUM_TEST_PEPTIDES <- ""
 
 # CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
 GRPLASSO_RESULTS_FNAME <- "grplasso-result"
-DATASET_NAME <- paste0("combined", "_", NUM_TEST_PEPTIDES)
+DATASET_NAME <- paste0("virscan", "_", NUM_TEST_PEPTIDES)
 BASE_FNAME <- paste0(GRPLASSO_RESULTS_FNAME, "_", DATASET_NAME)
 EXCEL_FNAME <- paste0(BASE_FNAME, "_", DATASET_NAME, ".xlsx")
 
@@ -139,7 +145,7 @@ vir_lib   <- readRDS(file.path(DATA_DIR, "vir_lib_renamed_ids.rds"))  # if neede
 
 META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "Hospitalized")
 
-X_y_cov_z <- cov_z_pat %>%
+X_y_vir_z <- vir_z_pat %>%
   select(-all_of(META_COL_NO_STATUS)) %>%
   mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
   select(COVID19_status, everything())
@@ -148,65 +154,25 @@ X_y_cov_z <- cov_z_pat %>%
 if (NUM_TEST_PEPTIDES != "") {
   set.seed(12345)  
   TEST_COL_FNAME <- paste0(BASE_FNAME, "_", "test_columns.rds")
-  test_peptide_columns <- sample(colnames(X_y_cov_z[,-1]), as.numeric(NUM_TEST_PEPTIDES))
+  test_peptide_columns <- sample(colnames(X_y_vir_z[,-1]), as.numeric(NUM_TEST_PEPTIDES))
   # save in RUN_DIR
   saveRDS(test_peptide_columns, file.path(RUN_DIR, TEST_COL_FNAME))
-  X_y_cov_z <- X_y_cov_z %>% select(all_of(c("COVID19_status", test_peptide_columns)))
+  X_y_vir_z <- X_y_vir_z %>% select(all_of(c("COVID19_status", test_peptide_columns)))
 }
 
-X_cov_z <- X_y_cov_z %>% select(-COVID19_status)
-y_cov_z <- X_y_cov_z$COVID19_status
+X_vir_z <- X_y_vir_z %>% select(-COVID19_status)
+y_vir_z <- X_y_vir_z$COVID19_status
 
-cat("Peptide Data Dimensions:", dim(X_cov_z), "\n")
-cat("Response Vector Length:", length(y_cov_z), "\n")
+cat("Peptide Data Dimensions:", dim(X_vir_z), "\n")
+cat("Response Vector Length:", length(y_vir_z), "\n")
 
-X <- X_cov_z %>%
+X <- X_vir_z %>%
   as.matrix()
 
-y <- y_cov_z %>%
+y <- y_vir_z %>%
   as.numeric()
 # CHECK BEFORE RUNNING - CHANGE TO APPROPRIATE NAMES ####################################################################
 
-
-
-
-# #============================================================================
-# # virscan data============================================================================
-# ### data prep
-# META_COL_NO_STATUS <- c("rep_id", "Sample", "Library", "IP_reagent", 
-#                    "Hospitalized", "Pull_down_antibody", 
-#                    "patient", "original_id_column") # excludes COVID19_status which will be a part of the final dataframe
-
-
-# # X_y_vir_z includes z-scores and COVID19_status vs. X_vir_z includes z-scores only
-# X_y_vir_z <- vir_z_pat %>%
-#     select(-all_of(META_COL_NO_STATUS)) %>%
-#     mutate(COVID19_status = ifelse(is.na(COVID19_status), 0, as.numeric(COVID19_status == "positive"))) %>%
-#     # put COVID19_status as the first column
-#     select(COVID19_status, everything())
-
-# # TEST ON A SUBSET ==========================================================
-# set.seed(123)
-# if (NUM_TEST_PEPTIDES != "") {
-#   TEST_COL_FNAME <- paste0(BASE_FNAME, "_", "test_columns.rds")
-#   test_peptide_columns <- sample(colnames(X_y_vir_z[,-1]), as.numeric(NUM_TEST_PEPTIDES))
-#   saveRDS(test_peptide_columns, file.path(RUN_DIR, TEST_COL_FNAME))
-#   X_y_vir_z <- X_y_vir_z %>% select(all_of(c("COVID19_status", test_peptide_columns)))
-# }
-
-# X_vir_z <- X_y_vir_z %>% select(-COVID19_status)
-# y_vir_z <- X_y_vir_z$COVID19_status
-
-# X <- X_vir_z %>%
-#   as.matrix()
-
-# y <- y_vir_z %>%
-#   as.numeric()
-
-# # Confirm dimensions
-# sink(DEBUG_LOG, append = TRUE)
-# cat("Peptide Data Dimensions:", dim(X), "\n")
-# cat("Response Vector Length:", length(y), "\n")
 
 # parallel processing ver
 
@@ -236,33 +202,52 @@ run_grplasso_reg_parallel <- function(X, Y, groups = NULL, split_type = c("train
     sink()
 
     if (groups == "Organism") {
-    # Extract peptide IDs from the column names of X
-    peptide_ids <- colnames(X)
-    if (is.null(peptide_ids)) {
+      # Extract peptide IDs from the column names of X
+      peptide_ids <- colnames(X)
+      if (is.null(peptide_ids)) {
         stop("Error: X must have column names representing peptide IDs.")
-    }
-    
-    # For each peptide ID, apply get_organism_by_id() to retrieve the organism value
-    organisms <- sapply(peptide_ids, function(pid) {
+      }
+      
+      # For each peptide ID, retrieve the organism value
+      organisms <- sapply(peptide_ids, function(pid) {
         result <- get_organism_by_id(pid, cov_lib, vir_lib)
         return(result$Organism)
-    })
-    
-    # Identify indices for valid (non-NA) organism entries
-    valid_idx <- which(!is.na(organisms))
-    if (length(valid_idx) < length(organisms)) {
+      })
+      
+      # Identify valid (non-NA) organism entries
+      valid_idx <- which(!is.na(organisms))
+      if (length(valid_idx) < length(organisms)) {
         warning("Excluding ", length(organisms) - length(valid_idx), " peptides with NA organism.")
+      }
+      
+      # Subset both X and organisms to exclude peptides with NA organism
+      X <- X[, valid_idx, drop = FALSE]
+      organisms <- organisms[valid_idx]
+      
+      # **New Step:** Remove any columns with zero variance
+      zero_var_cols <- which(apply(X, 2, var) == 0)
+      if (length(zero_var_cols) > 0) {
+        cat("Dropping columns with zero variance:", zero_var_cols, "\n")
+        X <- X[, -zero_var_cols, drop = FALSE]
+        organisms <- organisms[-zero_var_cols]
+      }
+      
+      # Convert organisms to numeric group indices
+      group_indices <- as.integer(as.factor(organisms))
+      
+      # Double-check that the length of group_indices matches the number of columns in X
+      if (length(group_indices) != ncol(X)) {
+        stop("Mismatch: length of group_indices (", length(group_indices), 
+          ") != number of columns in X (", ncol(X), ")")
+      }
+      
+      # Build index_final: first element for the intercept, then one value per predictor
+      index_final <- c(NA, group_indices)
+    } else {
+      # Default case: each feature is its own group
+      index_final <- c(NA, rep(1:ncol(X), each = 1))
     }
-    
-    # Subset X (and peptide_ids and organisms) to exclude peptides with NA organism
-    X <<- X[, valid_idx, drop = FALSE]  # Using <<- to update X in the parent environment if needed
-    peptide_ids <- peptide_ids[valid_idx]
-    organisms <- organisms[valid_idx]
-    
-    # Convert organism labels to a numeric group index and build index_final
-    group_indices <- as.integer(as.factor(organisms))
-    index_final <- c(NA, group_indices)
-    }
+
 
     set.seed(12345)
     train_idx <- sample(1:n, size = train_ratio * n)
@@ -367,7 +352,7 @@ one_grp <- c("Organism")
 # call grplasso function for single group option "Organism"
 results <- run_grplasso_reg_parallel(X, y, groups = one_grp, split_type = "train_validate_test", visualize = TRUE, num_cores = num_cores)
 saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
-cat("save results as RDS in", RUN_DIR, "\n")
+cat("saved results as RDS in", RUN_DIR, "\n")
 
 # # Define a function to process each group option in parallel
 # process_group_option <- function(group_option) {
@@ -413,10 +398,11 @@ cat("save results as RDS in", RUN_DIR, "\n")
 #============================================================================
 # post-processing
 #============================================================================
-RUN_DIR <- "/n/home01/egraff/hdsi-vector-ai/results/eda/grplasso/grplasso-result_covscan_100_2025-02-25_13-16-48"
-PAR_RESULTS_FNAME <- "grplasso-result_covscan_100_fin.rds"
-# Load results and add organism names
-results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
+# # COMMENT IF NOT RUNNING INTERACTIVELY 
+# RUN_DIR <- "/n/home01/egraff/hdsi-vector-ai/results/eda/grplasso/grplasso-result_combined_100_2025-03-11_13-46-34"
+# PAR_RESULTS_FNAME <- "grplasso-result_combined_100_fin.rds"
+# # Load results and add organism names
+# results <- readRDS(file.path(RUN_DIR, PAR_RESULTS_FNAME))
 
 # Summarize key model results
 cat("Best lambda selected:", results$best_lambda, "\n")
@@ -425,7 +411,7 @@ cat("Test MSE:", results$test_mse, "\n")
 # Create a summary table of coefficients excluding the intercept
 coefs_df <- results$coefs
 coefs_no_int <- subset(coefs_df, is_intercept == FALSE)
-coefs_no_int <- coefs_no_int %>%
+coefs_no_int_labeled <- coefs_no_int %>%
   arrange(desc(coef)) %>% # Sort by coefficient value
   mutate(
     attributes = map(feats, get_organism_by_id, cov_lib, vir_lib),
@@ -436,8 +422,7 @@ coefs_no_int <- coefs_no_int %>%
     End = map_dbl(attributes, "End")
   ) %>%
   select(-attributes) %>% # Remove the intermediate list column
-  filter(!is.na(organism)) %>%
-  distinct(organism, .keep_all = TRUE) %>% 
+  # filter(!is.na(organism)) %>% 
   mutate(
     first_n_words = sapply(organism, get_first_n_words, n = 10),  # Get the first N words of `organism`
     first_char_protein = substr(Protein, 1, 1),                  # Get the first character of `Protein`
@@ -446,50 +431,67 @@ coefs_no_int <- coefs_no_int %>%
   ) %>%
   select(-first_n_words, -first_char_protein, -start_end)
 
+# Save the coefficients to a CSV file
+COEF_FNAME_CSV <- paste0(BASE_FNAME, "_", "coefs.csv")
+write.csv(coefs_no_int_labeled, here::here(RUN_DIR, COEF_FNAME_CSV), row.names = FALSE)
+
+# filter rows whose coef is positive
+pos_coefs_no_int <- coefs_no_int_labeled %>%
+  filter(coef > 0) 
+POS_COEF_FNAME_CSV <- paste0(BASE_FNAME, "_", "pos_coefs.csv")
+write.csv(coefs_no_int_labeled, here::here(RUN_DIR, POS_COEF_FNAME_CSV), row.names = FALSE)
+
 # # sanity check -- verified there are ten unique (group, organism) pairs
 # unique_pairs <- coefs_no_int %>%
 #   distinct(group, organism)
 
-# Save the coefficients to a CSV file
-COEF_FNAME_CSV <- paste0(BASE_FNAME, "_", "coefs.csv")
-write.csv(coefs_no_int, here::here(RUN_DIR, COEF_FNAME_CSV), row.names = FALSE)
+#============================================================================
+# post-processing pt 2
+#============================================================================
+
 
 # Visualization =================================================================
 # Define a common color scale using the default hue scale
+
 common_colors <- scale_fill_hue()
 
 # Plot 1: Horizontal bar plot (ensure same color scale)
 
-p1 <- ggplot(coefs_no_int, aes(x = reorder(feats, coef), y = coef, fill = factor(group))) +
+p1 <- ggplot(pos_coefs_no_int, aes(x = reorder(feats, coef), y = coef, fill = factor(str_wrap(paste0("Group ", group, " - ", organism), width = 30)))) +
   geom_bar(stat = "identity") +
   coord_flip() +
   labs(x = "Peptide ID", y = "Coefficient",
-       fill = paste0("Group (Organism) ", organism),
+       fill = paste0("Group (Organism)"),
        title = "Group Lasso Coefficients (Excluding Intercept)") +
   common_colors +
   theme_minimal()
 
 print(p1)
+# save plot to file
+ggsave(filename = file.path(RUN_DIR, "pos_coef_barplot.png"), bg = "white", plot = p1, width = 10, height = 6)
 
 print(p1)
 
 # Plot 2: Boxplot using the exact same color scale as p1
-p2 <- ggplot(coefs_no_int, aes(x = factor(group), y = coef, fill = factor(group))) +
+p2 <- ggplot(pos_coefs_no_int, aes(x = factor(group), y = coef, fill = factor(str_wrap(paste0("Group ", group, " - ", organism), width = 30)))) +
   geom_boxplot() +
   labs(x = "Group", y = "Coefficient",
+      fill = "Group (Organism)",
        title = "Coefficient Distribution by Group") +
   common_colors +
   theme_minimal()
 
 print(p2)
 
-for (opt in names(results)) {
-  organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
-      get_organism_by_id(x, cov_lib, vir_lib)$Organism
-  })
-  organisms <- c("NA - intercept", organisms)
-  results[[opt]]$coefs$organism <- organisms
-}
+ggsave(filename = file.path(RUN_DIR, "pos_coef_boxplot.png"), bg = "white", plot = p2, width = 10, height = 6)
+
+# for (opt in names(results)) {
+#   organisms <- sapply(results[[opt]]$coefs$feats[-1], function(x) {
+#       get_organism_by_id(x, cov_lib, vir_lib)$Organism
+#   })
+#   organisms <- c("NA - intercept", organisms)
+#   results[[opt]]$coefs$organism <- organisms
+# }
 
 # # save results as RDS in RUN_DIR
 # saveRDS(results, file.path(RUN_DIR, PAR_RESULTS_FNAME))
